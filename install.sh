@@ -23,8 +23,13 @@ curl -L -o "$DMG_PATH" "$DMG_URL" --progress-bar
 
 # 2. Mount DMG
 echo -e "${BLUE}[2/4] Mounting disk image...${NC}"
-# Mount and capture mount point
-MOUNT_INFO=$(hdiutil attach -nobrowse -readonly "$DMG_PATH" | grep "/Volumes/")
+# Use diskutil image attach if supported, fallback to hdiutil attach
+if diskutil 2>&1 | grep -q "image"; then
+    MOUNT_INFO=$(diskutil image attach --mountOptions nobrowse --readOnly "$DMG_PATH" | grep "/Volumes/")
+else
+    # Fallback for older macOS versions
+    MOUNT_INFO=$(hdiutil attach -nobrowse -readonly "$DMG_PATH" 2>/dev/null | grep "/Volumes/")
+fi
 MOUNT_POINT=$(echo "$MOUNT_INFO" | awk -F'\t' '{print $NF}' | xargs)
 
 if [ -z "$MOUNT_POINT" ]; then
@@ -36,7 +41,11 @@ fi
 # Cleanup handler to unmount DMG in case of failure
 cleanup() {
     if [ -n "$MOUNT_POINT" ]; then
-        hdiutil detach "$MOUNT_POINT" -force &>/dev/null || true
+        if diskutil 2>&1 | grep -q "image"; then
+            diskutil eject "$MOUNT_POINT" &>/dev/null || true
+        else
+            hdiutil detach "$MOUNT_POINT" -force &>/dev/null || true
+        fi
     fi
     rm -rf "$TEMP_DIR"
 }
