@@ -1,0 +1,73 @@
+#!/bin/bash
+set -e
+
+# Colors for terminal output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+echo -e "${BLUE}===============================================${NC}"
+echo -e "${GREEN}          Installing Mitthu for macOS          ${NC}"
+echo -e "${BLUE}===============================================${NC}"
+
+# Temporary download locations
+DMG_URL="https://github.com/Amritkumarchanchal/mitthu/raw/main/build/Mitthu.dmg"
+TEMP_DIR=$(mktemp -d)
+DMG_PATH="${TEMP_DIR}/Mitthu.dmg"
+MOUNT_POINT=""
+
+# 1. Download DMG
+echo -e "${BLUE}[1/4] Downloading latest Mitthu.dmg...${NC}"
+curl -L -o "$DMG_PATH" "$DMG_URL" --progress-bar
+
+# 2. Mount DMG
+echo -e "${BLUE}[2/4] Mounting disk image...${NC}"
+# Mount and capture mount point
+MOUNT_INFO=$(hdiutil attach -nobrowse -readonly "$DMG_PATH" | grep "/Volumes/")
+MOUNT_POINT=$(echo "$MOUNT_INFO" | awk -F'\t' '{print $NF}' | xargs)
+
+if [ -z "$MOUNT_POINT" ]; then
+    echo -e "${RED}Error: Failed to mount DMG.${NC}"
+    rm -rf "$TEMP_DIR"
+    exit 1
+fi
+
+# Cleanup handler to unmount DMG in case of failure
+cleanup() {
+    if [ -n "$MOUNT_POINT" ]; then
+        hdiutil detach "$MOUNT_POINT" -force &>/dev/null || true
+    fi
+    rm -rf "$TEMP_DIR"
+}
+trap cleanup EXIT
+
+# 3. Copy Application
+echo -e "${BLUE}[3/4] Installing Mitthu.app to Applications folder...${NC}"
+APP_SOURCE="${MOUNT_POINT}/Mitthu.app"
+
+if [ -d "/Applications/Mitthu.app" ]; then
+    echo "Updating existing installation of Mitthu..."
+    rm -rf "/Applications/Mitthu.app"
+fi
+
+# Try copying. If permission fails, try with sudo.
+if cp -R "$APP_SOURCE" "/Applications/" 2>/dev/null; then
+    echo "Successfully copied Mitthu.app."
+else
+    echo -e "${BLUE}Please enter your Mac password to complete the installation:${NC}"
+    sudo cp -R "$APP_SOURCE" "/Applications/"
+fi
+
+# 4. De-quarantine
+echo -e "${BLUE}[4/4] Removing Gatekeeper security restrictions...${NC}"
+if xattr -cr "/Applications/Mitthu.app" 2>/dev/null; then
+    :
+else
+    sudo xattr -cr "/Applications/Mitthu.app"
+fi
+
+echo -e "${GREEN}===============================================${NC}"
+echo -e "${GREEN}      Success! Mitthu is installed.            ${NC}"
+echo -e "${BLUE}===============================================${NC}"
+echo "You can now open Mitthu from your Applications folder."
