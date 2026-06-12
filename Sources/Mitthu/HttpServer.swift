@@ -183,6 +183,15 @@ class HttpServer {
             } else {
                 sendJson(clientSocket, json: "{\"success\": false, \"error\": \"No body\"}", status: 400)
             }
+        } else if method == "GET" && path == "/api/system-prompt" {
+            serveApiSystemPrompt(clientSocket)
+        } else if method == "POST" && path == "/api/system-prompt" {
+            if let bodyRange = requestStr.range(of: "\r\n\r\n") {
+                let body = String(requestStr[bodyRange.upperBound...])
+                handlePostSystemPrompt(clientSocket, body: body)
+            } else {
+                sendJson(clientSocket, json: "{\"success\": false, \"error\": \"No body\"}", status: 400)
+            }
         } else {
             sendResponse(clientSocket, body: "Not Found", contentType: "text/plain", status: 404)
         }
@@ -497,6 +506,45 @@ class HttpServer {
         
         let success = HttpServer.setLaunchAtLogin(enabled: enabled)
         sendJson(socket, json: "{\"success\": \(success)}")
+    }
+    
+    private func serveApiSystemPrompt(_ socket: Int32) {
+        let currentDir = FileManager.default.currentDirectoryPath
+        let instructionsURL = URL(fileURLWithPath: currentDir).appendingPathComponent("instructions.md")
+        var systemPrompt = "You are Mitthu Assistant, a privacy-first local AI productivity expert. You analyze screen time, categorize activities, identify distractions, and suggest learning strategies like Spaced Repetition, Active Recall, and the Feynman Technique. Always format your responses in a clean, human-friendly, point-wise (bulleted) structure. Avoid long paragraphs and make it easy to scan at a glance."
+        
+        if FileManager.default.fileExists(atPath: instructionsURL.path),
+           let content = try? String(contentsOf: instructionsURL, encoding: .utf8) {
+            systemPrompt = content
+        }
+        
+        let jsonResponse = "{\"prompt\": \"\(escapeJson(systemPrompt))\"}"
+        sendJson(socket, json: jsonResponse)
+    }
+    
+    private func handlePostSystemPrompt(_ socket: Int32, body: String) {
+        guard let data = body.trimmingCharacters(in: .whitespacesAndNewlines).data(using: .utf8) else {
+            sendJson(socket, json: "{\"success\": false, \"error\": \"Invalid encoding\"}", status: 400)
+            return
+        }
+        
+        guard let json = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any],
+              let prompt = json["prompt"] as? String else {
+            sendJson(socket, json: "{\"success\": false, \"error\": \"Could not parse prompt\"}", status: 400)
+            return
+        }
+        
+        let currentDir = FileManager.default.currentDirectoryPath
+        let instructionsURL = URL(fileURLWithPath: currentDir).appendingPathComponent("instructions.md")
+        
+        do {
+            try prompt.write(to: instructionsURL, atomically: true, encoding: .utf8)
+            print("Mitthu Server: Updated instructions.md on disk.")
+            sendJson(socket, json: "{\"success\": true}")
+        } catch {
+            print("Mitthu Server Error: Could not write to instructions.md: \(error.localizedDescription)")
+            sendJson(socket, json: "{\"success\": false, \"error\": \"Could not write to file\"}", status: 500)
+        }
     }
     
     private func handlePostRulesDelete(_ socket: Int32, body: String) {
@@ -1727,13 +1775,25 @@ class HttpServer {
                     });
                 }
 
-                function loadAISettings() {
+                 function loadAISettings() {
                     const endpoint = localStorage.getItem("SB_AI_ENDPOINT") || "http://localhost:11434/v1/chat/completions";
                     const model = localStorage.getItem("SB_AI_MODEL") || "llama3";
-                    const systemPrompt = localStorage.getItem("SB_AI_SYSTEM_PROMPT") || "You are Mitthu Assistant, a privacy-first local AI productivity expert. You analyze screen time, categorize activities, identify distractions, and suggest learning strategies like Spaced Repetition, Active Recall, and the Feynman Technique. Always format your responses in a clean, human-friendly, point-wise (bulleted) structure. Avoid long paragraphs and make it easy to scan at a glance.";
                     document.getElementById("ai-endpoint").value = endpoint;
                     document.getElementById("ai-model").value = model;
-                    document.getElementById("ai-system-prompt").value = systemPrompt;
+                    
+                    fetch('/api/system-prompt')
+                        .then(res => res.json())
+                        .then(data => {
+                            if (data.prompt) {
+                                document.getElementById("ai-system-prompt").value = data.prompt;
+                                localStorage.setItem("SB_AI_SYSTEM_PROMPT", data.prompt);
+                            }
+                        })
+                        .catch(err => {
+                            console.error("Could not load system prompt from file, falling back to local storage:", err);
+                            const systemPrompt = localStorage.getItem("SB_AI_SYSTEM_PROMPT") || "You are Mitthu Assistant, a privacy-first local AI productivity expert. You analyze screen time, categorize activities, identify distractions, and suggest learning strategies like Spaced Repetition, Active Recall, and the Feynman Technique. Always format your responses in a clean, human-friendly, point-wise (bulleted) structure. Avoid long paragraphs and make it easy to scan at a glance.";
+                            document.getElementById("ai-system-prompt").value = systemPrompt;
+                        });
                 }
 
                 function saveAISettings() {
@@ -1747,7 +1807,24 @@ class HttpServer {
                     localStorage.setItem("SB_AI_ENDPOINT", endpoint);
                     localStorage.setItem("SB_AI_MODEL", model);
                     localStorage.setItem("SB_AI_SYSTEM_PROMPT", systemPrompt);
-                    alert("Configuration saved successfully!");
+                    
+                    fetch('/api/system-prompt', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ prompt: systemPrompt })
+                    })
+                    .then(res => res.json())
+                    .then(data => {
+                        if (data.success) {
+                            alert("Saved in cache and instructions.md successfully!");
+                        } else {
+                            alert("Saved in cache but failed to update instructions.md: " + data.error);
+                        }
+                    })
+                    .catch(err => {
+                        console.error("Error saving system prompt to disk:", err);
+                        alert("Saved in cache (instructions.md write failed).");
+                    });
                 }
 
                 function clearChatLog() {
@@ -1867,11 +1944,24 @@ class HttpServer {
                             const totalTime = fTime + mTime;
                             const focusScore = totalTime > 0 ? Math.round((fTime / totalTime) * 100) : 0;
                             
-                            let statsContext = `Daily Stats for date ${statsData.date}:\\nActive Time: ${totalActive}, Idle/Away Time: ${totalIdle}, Focus Score: ${focusScore}%.\\n`;
+                            let statsContext = `Daily Stats for date ${statsData.date}:\nActive Time: ${totalActive}, Idle/Away Time: ${totalIdle}, Focus Score: ${focusScore}%.\n`;
                             if (includeStats) {
-                                const appsText = (statsData.appStats || []).slice(0, 8).map(a => `- ${a.appName}: ${formatTime(a.duration)}`).join('\\n');
-                                statsContext += `Top Apps:\\n${appsText}\\n`;
+                                const appsText = (statsData.appStats || []).slice(0, 8).map(a => `- ${a.appName}: ${formatTime(a.duration)}`).join('\n');
+                                statsContext += `Top Apps:\n${appsText}\n`;
                             }
+                            
+                            // Find all specific study/focus window titles visited today
+                            const focusEvents = (statsData.timeline || []).filter(e => e.category === 'Study' || e.category === 'Coding' || (e.category !== 'Entertainment' && e.category !== 'Social' && e.category !== 'Idle' && e.category !== 'Uncategorized'));
+                            const uniqueFocusTitles = Array.from(new Set(focusEvents.map(e => {
+                                let title = e.windowTitle.trim();
+                                if (!title) return '';
+                                return `${e.appName} - "${title}"`;
+                            }).filter(t => t !== '')));
+                            
+                            if (uniqueFocusTitles.length > 0) {
+                                statsContext += `\nSpecific Study/Focus Window Titles Visited Today:\n` + uniqueFocusTitles.map(t => `- ${t}`).join('\n') + `\n`;
+                            }
+                            
                             if (includeTimeline) {
                                 let filteredTimeline = (statsData.timeline || []).filter(e => e.duration >= 30);
                                 let compressed = [];
@@ -1889,8 +1979,8 @@ class HttpServer {
                                 }
                                 if (current) compressed.push(current);
                                 
-                                const timelineText = compressed.slice(0, 20).map(c => `[${c.start}] ${c.app} (${c.cat}): ${formatTime(c.dur)} - "${Array.from(c.titles).slice(0, 2).join(' | ').substring(0, 80)}"`).join('\\n');
-                                statsContext += `Timeline Events (Filtered & Aggregated):\\n${timelineText}\\n`;
+                                const timelineText = compressed.slice(0, 20).map(c => `[${c.start}] ${c.app} (${c.cat}): ${formatTime(c.dur)} - "${Array.from(c.titles).slice(0, 2).join(' | ').substring(0, 80)}"`).join('\n');
+                                statsContext += `\nTimeline Events (Filtered & Aggregated):\n${timelineText}\n`;
                             }
                             
                             contextPayload = statsContext;
