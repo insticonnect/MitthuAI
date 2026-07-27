@@ -4,7 +4,7 @@ import plistlib
 import os.path
 
 # Path to the compiled .app bundle
-application = defines.get('app', 'build/Mitthu.app')
+application = defines.get('app', 'build/MitthuAI.app')
 appname = os.path.basename(application)
 
 # Extracts the app icon to badge the mounted volume
@@ -38,7 +38,7 @@ symlinks = { 'Applications': '/Applications' }
 # Badge icon for the volume
 badge_icon = icon_from_app(application)
 
-# Align Mitthu.app on the left and Applications shortcut on the right
+# Align MitthuAI.app on the left and Applications shortcut on the right
 icon_locations = {
     appname:        (140, 120),
     'Applications': (460, 120)
