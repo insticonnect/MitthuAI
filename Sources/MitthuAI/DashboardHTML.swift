@@ -24,7 +24,7 @@ enum DashboardHTML {
   header { display: flex; align-items: center; gap: 16px; padding: 14px 22px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--bg); z-index: 5;}
   /* Brand lockup — the mitthuai.com nav: parrot mark + white wordmark. */
   header h1 { display: flex; align-items: center; gap: 10px; }
-  .brand-mark { width: 28px; height: 28px; display: block; flex: none; }
+  .brand-mark { height: 28px; width: auto; display: block; flex: none; }
   .brand-word { font-family: var(--font-brand); font-size: 20px; font-weight: 700; line-height: 1; letter-spacing: -.01em; color: #FFFFFF; }
   nav { display: flex; gap: 4px; margin-left: 12px; }
   nav button { background: none; border: none; color: var(--dim); font: inherit; font-weight: 600; padding: 8px 14px; border-radius: 8px; cursor: pointer; }
@@ -157,7 +157,7 @@ enum DashboardHTML {
 </head>
 <body>
 <header>
-  <h1>\#(BrandLogo.svgMark)<span class="brand-word">MitthuAI</span></h1>
+  <h1><img class="brand-mark" src="\#(BrandLogo.logoDataURI)" alt="MitthuAI logo"><span class="brand-word">MitthuAI</span></h1>
   <nav>
     <button id="tab-today" class="active" onclick="show('today')">Today</button>
     <button id="tab-trends" onclick="show('trends')">Trends</button>
@@ -400,15 +400,15 @@ enum DashboardHTML {
   const p = new URLSearchParams(location.search);
   if (p.get('token')) { localStorage.setItem('hm_token', p.get('token')); history.replaceState({}, '', '/'); }
 })();
-// Tab icon: reuse the brand mark already inline in the header, so there is
-// only ever one copy of the artwork on the page.
+// Tab icon: reuse the logo already inline in the header, so there is only
+// ever one copy of the artwork on the page.
 (function(){
   const mark = document.querySelector('.brand-mark');
-  if (!mark) return;
+  if (!mark || !mark.src) return;
   const link = document.createElement('link');
   link.rel = 'icon';
-  link.type = 'image/svg+xml';
-  link.href = 'data:image/svg+xml;base64,' + btoa(new XMLSerializer().serializeToString(mark));
+  link.type = 'image/png';
+  link.href = mark.src;
   document.head.appendChild(link);
 })();
 const TOKEN = localStorage.getItem('hm_token') || '';

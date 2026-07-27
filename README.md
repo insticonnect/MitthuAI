@@ -280,11 +280,17 @@ storage: SQLite (WAL) + FTS5 + vector blobs — one file
 
 ## Branding
 
-The mitthuai.com parrot lives in **one** place: `Sources/MitthuAI/BrandLogo.swift`.
-The artwork is written as vector paths in SVG coordinates and rendered wherever
-it's needed — inline SVG in the dashboard header, an `NSImage` for the popover,
-a white template image for the menu bar, and the `.icns` app icon via
-`Tools/MakeIcon.swift`. Edit the paths there and every surface moves together.
+The mitthuai.com logo ships as files under `Resources/`, and
+`Sources/MitthuAI/BrandLogo.swift` just loads them — nothing draws the parrot:
+
+| File | Used by |
+| --- | --- |
+| `Resources/Brand/icon.icon/` | Icon Composer source everything else comes from |
+| `Resources/Brand/mitthuai-logo.png` | popover header, and inlined into the dashboard page |
+| `Resources/Brand/mitthuai-menubar.png` | menu bar — the logo as a white silhouette with its own beak and eye knocked out, because 18pt is too small for full colour |
+| `Resources/AppIcon.icns` | the app icon, committed rather than generated |
+
+Replace the PNGs and every surface follows.
 
 The **MitthuAI** wordmark is Plus Jakarta Sans Bold at 20px on `#FFFFFF`, the
 same as the site. `Resources/Fonts/MitthuAIWordmark.ttf` is that face subset to

@@ -80,8 +80,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem?.button {
             // The mitthuai.com parrot, as a white template image: macOS paints
-            // it white on the dark menu bar and inverts it on a light one.
+            // it white on the dark menu bar and inverts it on a light one. The
+            // SF Symbol is a last resort so the item can never go invisible.
             button.image = BrandLogo.menuBarImage()
+                ?? NSImage(systemSymbolName: "bird.fill", accessibilityDescription: "MitthuAI")
             button.action = #selector(togglePopover(_:))
             button.target = self
         }

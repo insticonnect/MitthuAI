@@ -42,8 +42,9 @@ struct MenuBarView: View {
     /// white wordmark on the brand's ink background.
     private var brandBar: some View {
         HStack(spacing: 9) {
-            Image(nsImage: BrandLogo.image(size: BrandLogo.wordmarkSize + 4))
-                .accessibilityLabel("MitthuAI logo")
+            if let mark = BrandLogo.image(size: BrandLogo.wordmarkSize + 4) {
+                Image(nsImage: mark).accessibilityLabel("MitthuAI logo")
+            }
             Text("MitthuAI")
                 // .weight keeps it bold if the bundled face is ever missing and
                 // the system font stands in.
