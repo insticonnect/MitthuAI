@@ -10,10 +10,23 @@ spaced-repetition reminders, and an **MCP server** you can plug into Claude.
 
 ---
 
-## Build & install
+## Install
 
-**Requirements:** macOS 12+ and Xcode command line tools (`xcode-select --install`).
-No Node, no Homebrew — plain Swift against system frameworks.
+macOS 12 or newer, Apple Silicon or Intel:
+
+```bash
+curl -fsSL https://mitthuai.com/install.sh | bash
+```
+
+That downloads the latest [release](https://github.com/insticonnect/MitthuAI/releases/latest)
+disk image, checks it against `SHA256SUMS.txt`, installs `MitthuAI.app` into
+`/Applications`, and launches it. Re-run it any time to update — your data stays
+put. Or grab `MitthuAI.dmg` from the releases page and drag the app across.
+
+## Build from source
+
+**Requirements:** Xcode command line tools (`xcode-select --install`). No Node,
+no Homebrew — plain Swift against system frameworks.
 
 ```bash
 git clone https://github.com/insticonnect/MitthuAI.git
@@ -22,21 +35,35 @@ cd MitthuAI
 open build/MitthuAI.app
 ```
 
-`build.sh` compiles every file in `Sources/MitthuAI/`, copies `Info.plist`,
+`build.sh` compiles every file in `Sources/MitthuAI/`, stamps `Info.plist`,
 generates the parrot icon from `Tools/MakeIcon.swift`, and ad-hoc signs the
 bundle with `entitlements.plist`. It wipes `build/` first, so it is always a
-clean build.
+clean build. Flags:
 
-Package a disk image with `./build.sh --dmg` → `build/MitthuAI.dmg`
-(needs `pip3 install dmgbuild`; layout lives in `dmgbuild-settings.py`).
+| Flag | Effect |
+|---|---|
+| `--universal` | one bundle for `arm64` + `x86_64` (releases use this) |
+| `--dmg` | also package `build/MitthuAI.dmg` (`pip3 install dmgbuild`) |
+| `--version X.Y.Z` | stamp that version into the bundle |
 
-Prefer a prebuilt app? `./install.sh` downloads the latest release DMG, copies
-`MitthuAI.app` to `/Applications`, and clears the Gatekeeper quarantine flag.
+`./Tools/verify-bundle.sh build/MitthuAI.app build/MitthuAI.dmg` checks the
+result: both architectures, valid `Info.plist`, intact signature, and an app +
+Applications link inside the disk image.
 
-**Update:** `git pull && ./build.sh`. Quit from the menu bar (🦜 → Quit) before
-relaunching. Your data lives in
+**Update a source build:** `git pull && ./build.sh`, quitting from the menu bar
+(🦜 → Quit) first. Your data lives in
 `~/Library/Application Support/MitthuAI/mitthuai.db` and the build never touches
 it — token, settings, rules and history all carry over.
+
+## Releases
+
+Every push builds the app on a macOS runner
+([`.github/workflows/build.yml`](.github/workflows/build.yml)) and keeps the disk
+image as a CI artifact. Pushing a `v*` tag publishes a GitHub Release with
+`MitthuAI.dmg`, `SHA256SUMS.txt` and `install.sh`
+([`release.yml`](.github/workflows/release.yml)) — that release is what
+mitthuai.com serves. See [docs/RELEASING.md](docs/RELEASING.md) for cutting a
+release, wiring the website, and the notarization path.
 
 ## First run
 
