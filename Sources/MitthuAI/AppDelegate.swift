@@ -79,10 +79,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem?.button {
-            // Parrot (mitthu) branding — "bird" is the closest SF Symbol.
-            button.image = NSImage(systemSymbolName: "bird.fill",
-                                   accessibilityDescription: "MitthuAI")
-                ?? NSImage(systemSymbolName: "bird", accessibilityDescription: "MitthuAI")
+            // The mitthuai.com parrot, as a white template image: macOS paints
+            // it white on the dark menu bar and inverts it on a light one.
+            button.image = BrandLogo.menuBarImage()
             button.action = #selector(togglePopover(_:))
             button.target = self
         }

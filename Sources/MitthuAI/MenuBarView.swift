@@ -8,7 +8,6 @@ final class MenuBarModel: ObservableObject {
     @Published var paused = Config.shared.paused
     @Published var activeToday = ""
     @Published var importantCount = 0
-    @Published var launchAtLogin = LoginItem.isEnabled
 }
 
 /// The popover shown from the menu bar icon.
@@ -30,21 +29,42 @@ struct MenuBarView: View {
     }
 
     var body: some View {
+        VStack(spacing: 0) {
+            brandBar
+            details
+        }
+        .frame(width: 280)
+        .onAppear(perform: refresh)
+        .onReceive(ticker) { _ in refresh() }
+    }
+
+    /// The mitthuai.com nav, shrunk to fit the popover: parrot mark plus the
+    /// white wordmark on the brand's ink background.
+    private var brandBar: some View {
+        HStack(spacing: 9) {
+            Image(nsImage: BrandLogo.image(size: BrandLogo.wordmarkSize + 4))
+                .accessibilityLabel("MitthuAI logo")
+            Text("MitthuAI")
+                // .weight keeps it bold if the bundled face is ever missing and
+                // the system font stands in.
+                .font(.custom(BrandLogo.wordmarkFontName, size: BrandLogo.wordmarkSize).weight(.bold))
+                .foregroundColor(Color(BrandLogo.color(BrandLogo.wordmarkHex)))
+            Spacer()
+            Circle()
+                .fill(model.paused ? Color.orange : Color.green)
+                .frame(width: 9, height: 9)
+            Text(model.paused ? "Paused" : "Tracking")
+                .font(.caption)
+                .foregroundColor(Color(BrandLogo.color(BrandLogo.wordmarkHex)).opacity(0.6))
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity)
+        .background(Color(BrandLogo.color(BrandLogo.inkHex)))
+    }
+
+    private var details: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Text("🦜")
-                    .font(.headline)
-                Text("MitthuAI").font(.headline)
-                Spacer()
-                Circle()
-                    .fill(model.paused ? Color.orange : Color.green)
-                    .frame(width: 9, height: 9)
-                Text(model.paused ? "Paused" : "Tracking")
-                    .font(.caption).foregroundColor(.secondary)
-            }
-
-            Divider()
-
             VStack(alignment: .leading, spacing: 4) {
                 Text(tracker.isIdle ? "Idle" : tracker.currentAppName)
                     .font(.system(size: 13, weight: .semibold))
@@ -82,10 +102,8 @@ struct MenuBarView: View {
                     .frame(maxWidth: .infinity)
             }
 
-            Toggle("Open at Login", isOn: Binding(get: { model.launchAtLogin },
-                                                  set: { setLaunchAtLogin($0) }))
-                .toggleStyle(.checkbox)
-                .font(.caption)
+            // "Open at Login" lives in the dashboard's Settings → Startup; it
+            // is a set-once choice, not something to carry in the dropdown.
 
             Button(action: { NSApplication.shared.terminate(nil) }) {
                 Label("Quit MitthuAI", systemImage: "power")
@@ -93,9 +111,6 @@ struct MenuBarView: View {
             }
         }
         .padding(16)
-        .frame(width: 280)
-        .onAppear(perform: refresh)
-        .onReceive(ticker) { _ in refresh() }
     }
 
     private func togglePause() {
@@ -104,17 +119,8 @@ struct MenuBarView: View {
         model.paused = Config.shared.paused
     }
 
-    /// macOS may refuse the registration, so trust the state it reports back.
-    private func setLaunchAtLogin(_ on: Bool) {
-        let actual = LoginItem.setEnabled(on)
-        Config.shared.launchAtLogin = actual
-        Config.shared.save()
-        model.launchAtLogin = actual
-    }
-
     private func refresh() {
         model.paused = Config.shared.paused
-        model.launchAtLogin = LoginItem.isEnabled
         let fmt = DateFormatter()
         fmt.dateFormat = "yyyy-MM-dd"
         let stats = store.statsForDate(fmt.string(from: Date()))

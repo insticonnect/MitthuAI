@@ -58,23 +58,35 @@ swiftc \
     Sources/MitthuAI/CalendarExport.swift \
     Sources/MitthuAI/McpServer.swift \
     Sources/MitthuAI/DashboardHTML.swift \
+    Sources/MitthuAI/BrandLogo.swift \
     Sources/MitthuAI/MenuBarView.swift \
     -o "${APP_DIR}/Contents/MacOS/${APP_NAME}"
 
 echo "Configuring app bundle..."
 cp Info.plist "${APP_DIR}/Contents/Info.plist"
 
-# Generate the parrot app icon from Tools/MakeIcon.swift (AppKit vectors →
-# .iconset → .icns). Falls back to a stock icon if anything here fails so a
-# toolchain hiccup can never break the build.
+# Wordmark face, registered app-privately through Info.plist's
+# ATSApplicationFontsPath so the popover reads like mitthuai.com.
+mkdir -p "${APP_DIR}/Contents/Resources/Fonts"
+cp Resources/Fonts/* "${APP_DIR}/Contents/Resources/Fonts/"
+
+# Generate the parrot app icon from Tools/MakeIcon.swift plus the shared
+# artwork in BrandLogo.swift (AppKit vectors → .iconset → .icns). swiftc wants
+# the file holding top-level code to be called main.swift once more than one
+# file is compiled, hence the copy. Falls back to a stock icon if anything here
+# fails so a toolchain hiccup can never break the build.
 echo "Generating app icon..."
 ICONSET="${BUILD_DIR}/AppIcon.iconset"
-if swiftc -O -sdk "$SDK_PATH" -target "$TARGET" Tools/MakeIcon.swift \
+ICONSRC="${BUILD_DIR}/iconsrc"
+mkdir -p "$ICONSRC"
+cp Tools/MakeIcon.swift "${ICONSRC}/main.swift"
+if swiftc -O -sdk "$SDK_PATH" -target "$TARGET" \
+       "${ICONSRC}/main.swift" Sources/MitthuAI/BrandLogo.swift \
        -o "${BUILD_DIR}/makeicon" 2>/dev/null \
    && "${BUILD_DIR}/makeicon" "$ICONSET" 2>/dev/null \
    && iconutil -c icns "$ICONSET" -o "${APP_DIR}/Contents/Resources/AppIcon.icns" 2>/dev/null; then
     echo "  ✓ parrot icon generated"
-    rm -rf "$ICONSET" "${BUILD_DIR}/makeicon"
+    rm -rf "$ICONSET" "$ICONSRC" "${BUILD_DIR}/makeicon"
 else
     echo "  ! icon generation failed — using a stock icon"
     cp /System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/UserIcon.icns \

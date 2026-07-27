@@ -62,8 +62,8 @@ and no window; everything happens from the menu bar and the dashboard.
 
 On its first launch MitthuAI adds itself as a **login item**, so it starts on
 its own every time you log in or restart the Mac (System Settings → General →
-Login Items lists it). Turn that off — or back on — from the menu bar popover
-(**Open at Login**) or Settings → Startup.
+Login Items lists it). Turn that off — or back on — from the dashboard's
+Settings → Startup.
 
 **5. Grant permissions (first run):**
 
@@ -277,5 +277,20 @@ menu bar app (SwiftUI)
        └─ /mcp         MCP streamable-HTTP endpoint
 storage: SQLite (WAL) + FTS5 + vector blobs — one file
 ```
+
+## Branding
+
+The mitthuai.com parrot lives in **one** place: `Sources/MitthuAI/BrandLogo.swift`.
+The artwork is written as vector paths in SVG coordinates and rendered wherever
+it's needed — inline SVG in the dashboard header, an `NSImage` for the popover,
+a white template image for the menu bar, and the `.icns` app icon via
+`Tools/MakeIcon.swift`. Edit the paths there and every surface moves together.
+
+The **MitthuAI** wordmark is Plus Jakarta Sans Bold at 20px on `#FFFFFF`, the
+same as the site. `Resources/Fonts/MitthuAIWordmark.ttf` is that face subset to
+the wordmark's glyphs and renamed (SIL Open Font License 1.1 —
+`Resources/Fonts/OFL.txt`); the app registers it privately through
+`ATSApplicationFontsPath`, and the dashboard carries the same face inline as
+base64 WOFF2 so the page still needs no network.
 
 See `PLAN.md` for the full roadmap (OCR fallback, encryption at rest, local LLM digests…).

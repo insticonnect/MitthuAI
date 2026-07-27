@@ -12,16 +12,20 @@ enum DashboardHTML {
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>MitthuAI — Memory</title>
 <style>
+  \#(BrandLogo.wordmarkFontFace)
   :root {
     --bg: #0e0f13; --panel: #16181f; --panel2: #1d2029; --line: #262a36;
     --text: #e8eaf0; --dim: #8a90a3; --accent: #7c6cff; --accent2: #4fd1a5;
     --warn: #ffb454; --danger: #ff6b6b;
+    --font-brand: \#(BrandLogo.wordmarkCSSStack);
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: var(--bg); color: var(--text); font: 14px/1.5 -apple-system, "SF Pro Text", Helvetica, Arial, sans-serif; }
   header { display: flex; align-items: center; gap: 16px; padding: 14px 22px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--bg); z-index: 5;}
-  header h1 { font-size: 17px; font-weight: 700; letter-spacing: .3px; }
-  header h1 span { color: var(--accent); }
+  /* Brand lockup — the mitthuai.com nav: parrot mark + white wordmark. */
+  header h1 { display: flex; align-items: center; gap: 10px; }
+  .brand-mark { width: 28px; height: 28px; display: block; flex: none; }
+  .brand-word { font-family: var(--font-brand); font-size: 20px; font-weight: 700; line-height: 1; letter-spacing: -.01em; color: #FFFFFF; }
   nav { display: flex; gap: 4px; margin-left: 12px; }
   nav button { background: none; border: none; color: var(--dim); font: inherit; font-weight: 600; padding: 8px 14px; border-radius: 8px; cursor: pointer; }
   nav button.active { color: var(--text); background: var(--panel2); }
@@ -153,7 +157,7 @@ enum DashboardHTML {
 </head>
 <body>
 <header>
-  <h1>🦜 Mitthu<span>AI</span></h1>
+  <h1>\#(BrandLogo.svgMark)<span class="brand-word">MitthuAI</span></h1>
   <nav>
     <button id="tab-today" class="active" onclick="show('today')">Today</button>
     <button id="tab-trends" onclick="show('trends')">Trends</button>
@@ -395,6 +399,17 @@ enum DashboardHTML {
 (function(){
   const p = new URLSearchParams(location.search);
   if (p.get('token')) { localStorage.setItem('hm_token', p.get('token')); history.replaceState({}, '', '/'); }
+})();
+// Tab icon: reuse the brand mark already inline in the header, so there is
+// only ever one copy of the artwork on the page.
+(function(){
+  const mark = document.querySelector('.brand-mark');
+  if (!mark) return;
+  const link = document.createElement('link');
+  link.rel = 'icon';
+  link.type = 'image/svg+xml';
+  link.href = 'data:image/svg+xml;base64,' + btoa(new XMLSerializer().serializeToString(mark));
+  document.head.appendChild(link);
 })();
 const TOKEN = localStorage.getItem('hm_token') || '';
 async function api(path, opts) {
