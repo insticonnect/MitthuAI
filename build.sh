@@ -1,72 +1,90 @@
 #!/bin/bash
 set -e
 
-# Configuration
-APP_NAME="Mitthu"
+APP_NAME="MitthuAI"
 BUILD_DIR="build"
 APP_DIR="${BUILD_DIR}/${APP_NAME}.app"
 
+# Build for the machine we're on (arm64 on Apple Silicon, x86_64 on Intel).
+ARCH="$(uname -m)"
+TARGET="${ARCH}-apple-macosx12.0"
+
 echo "============================================="
-echo "Building Mitthu for macOS"
+echo "Building ${APP_NAME} for macOS (${TARGET})"
 echo "============================================="
 
-# 1. Clean old builds
-echo "Cleaning old build files..."
+echo "Cleaning old build..."
 rm -rf "$BUILD_DIR"
 mkdir -p "${APP_DIR}/Contents/"{MacOS,Resources}
 
-# 2. Compile Swift source code
-echo "Compiling Swift files..."
+# Newer SDKs implement SwiftUI property wrappers (@State etc.) as compiler
+# macros; bare swiftc needs to be told where the macro plugins live.
+SDK_PATH="$(xcrun --show-sdk-path)"
+TOOLCHAIN_USR="$(dirname "$(dirname "$(xcrun --find swiftc)")")"
+PLUGIN_FLAGS=""
+for p in "${SDK_PATH}/usr/lib/swift/host/plugins" \
+         "${TOOLCHAIN_USR}/lib/swift/host/plugins"; do
+    if [ -d "$p" ]; then
+        PLUGIN_FLAGS="${PLUGIN_FLAGS} -plugin-path ${p}"
+    fi
+done
+
+echo "Compiling Swift sources..."
 swiftc \
     -O \
-    -sdk "$(xcrun --show-sdk-path)" \
-    -target "arm64-apple-macosx11.0" \
-    Sources/Mitthu/main.swift \
-    Sources/Mitthu/AppDelegate.swift \
-    Sources/Mitthu/Models.swift \
-    Sources/Mitthu/Database.swift \
-    Sources/Mitthu/Tracker.swift \
-    Sources/Mitthu/DashboardView.swift \
-    Sources/Mitthu/HttpServer.swift \
+    -sdk "$SDK_PATH" \
+    -target "$TARGET" \
+    ${PLUGIN_FLAGS} \
+    Sources/MitthuAI/main.swift \
+    Sources/MitthuAI/AppDelegate.swift \
+    Sources/MitthuAI/Config.swift \
+    Sources/MitthuAI/LoginItem.swift \
+    Sources/MitthuAI/Keychain.swift \
+    Sources/MitthuAI/AccountPairing.swift \
+    Sources/MitthuAI/RelayClient.swift \
+    Sources/MitthuAI/SQLiteDB.swift \
+    Sources/MitthuAI/Store.swift \
+    Sources/MitthuAI/Embeddings.swift \
+    Sources/MitthuAI/AXReader.swift \
+    Sources/MitthuAI/Tracker.swift \
+    Sources/MitthuAI/ContentCapture.swift \
+    Sources/MitthuAI/Extractors.swift \
+    Sources/MitthuAI/DateParse.swift \
+    Sources/MitthuAI/ModelAssist.swift \
+    Sources/MitthuAI/ReminderScheduler.swift \
+    Sources/MitthuAI/Digest.swift \
+    Sources/MitthuAI/HttpServer.swift \
+    Sources/MitthuAI/Api.swift \
+    Sources/MitthuAI/CalendarExport.swift \
+    Sources/MitthuAI/McpServer.swift \
+    Sources/MitthuAI/DashboardHTML.swift \
+    Sources/MitthuAI/MenuBarView.swift \
     -o "${APP_DIR}/Contents/MacOS/${APP_NAME}"
 
-# 3. Copy Bundle Metadata and Resources
-echo "Configuring App Bundle Info.plist..."
+echo "Configuring app bundle..."
 cp Info.plist "${APP_DIR}/Contents/Info.plist"
 
-# Setup basic placeholder app icon if custom icon is missing
-echo "Creating icon files..."
-# Create a temporary icon image
-mkdir -p "${BUILD_DIR}/Icon.iconset"
-# Create a dummy image or copy system default
-cp /System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/UserIcon.icns "${APP_DIR}/Contents/Resources/AppIcon.icns" || true
-
-# 4. Verification
-echo "App bundle successfully created at ${APP_DIR}!"
-
-# 5. Packaging DMG Disk Image
-echo "---------------------------------------------"
-echo "Building Styled DMG Installer..."
-echo "---------------------------------------------"
-
-# Check if dmgbuild is installed, otherwise build a simple DMG using hdiutil
-if command -v dmgbuild &> /dev/null; then
-    echo "Using dmgbuild to generate styled installer..."
-    dmgbuild -s dmgbuild-settings.py "Mitthu Installer" "${BUILD_DIR}/${APP_NAME}.dmg"
+# Generate the parrot app icon from Tools/MakeIcon.swift (AppKit vectors →
+# .iconset → .icns). Falls back to a stock icon if anything here fails so a
+# toolchain hiccup can never break the build.
+echo "Generating app icon..."
+ICONSET="${BUILD_DIR}/AppIcon.iconset"
+if swiftc -O -sdk "$SDK_PATH" -target "$TARGET" Tools/MakeIcon.swift \
+       -o "${BUILD_DIR}/makeicon" 2>/dev/null \
+   && "${BUILD_DIR}/makeicon" "$ICONSET" 2>/dev/null \
+   && iconutil -c icns "$ICONSET" -o "${APP_DIR}/Contents/Resources/AppIcon.icns" 2>/dev/null; then
+    echo "  ✓ parrot icon generated"
+    rm -rf "$ICONSET" "${BUILD_DIR}/makeicon"
 else
-    echo "dmgbuild not found. Generating a basic DMG using hdiutil..."
-    # Create temp directory for simple layout
-    TMP_DMG_DIR="${BUILD_DIR}/dmg_layout"
-    mkdir -p "$TMP_DMG_DIR"
-    cp -r "$APP_DIR" "$TMP_DMG_DIR/"
-    ln -s /Applications "$TMP_DMG_DIR/Applications"
-    
-    # Run hdiutil
-    rm -f "${BUILD_DIR}/${APP_NAME}.dmg"
-    hdiutil create -volname "Mitthu" -srcfolder "$TMP_DMG_DIR" -ov -format UDZO "${BUILD_DIR}/${APP_NAME}.dmg"
-    rm -rf "$TMP_DMG_DIR"
+    echo "  ! icon generation failed — using a stock icon"
+    cp /System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/UserIcon.icns \
+       "${APP_DIR}/Contents/Resources/AppIcon.icns" 2>/dev/null || true
 fi
 
+echo "Signing (ad-hoc)..."
+codesign --force --deep -s - --entitlements entitlements.plist "${APP_DIR}" || true
+
 echo "============================================="
-echo "Success! DMG built at ${BUILD_DIR}/${APP_NAME}.dmg"
+echo "Done: ${APP_DIR}"
+echo "Run:  open ${APP_DIR}"
 echo "============================================="

@@ -1,0 +1,14 @@
+{
+  "name": "mitthuai-relay",
+  "version": "1.0.0",
+  "description": "Tunnel relay for MitthuAI / mitthuai — routes Claude MCP calls to a user's paired Mac. Google Sign-In for identity only; no email is read, no user memory is stored.",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": { "node": ">=18" },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
