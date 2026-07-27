@@ -8,17 +8,18 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 echo -e "${BLUE}===============================================${NC}"
-echo -e "${GREEN}          Installing Mitthu for macOS          ${NC}"
+echo -e "${GREEN}          Installing MitthuAI for macOS          ${NC}"
 echo -e "${BLUE}===============================================${NC}"
 
 # Temporary download locations
-DMG_URL="https://github.com/Amritkumarchanchal/mitthu/raw/main/build/Mitthu.dmg"
+APP_NAME="MitthuAI"
+DMG_URL="${MITTHUAI_DMG_URL:-https://github.com/insticonnect/MitthuAI/releases/latest/download/MitthuAI.dmg}"
 TEMP_DIR=$(mktemp -d)
-DMG_PATH="${TEMP_DIR}/Mitthu.dmg"
+DMG_PATH="${TEMP_DIR}/${APP_NAME}.dmg"
 MOUNT_POINT=""
 
 # 1. Download DMG
-echo -e "${BLUE}[1/4] Downloading latest Mitthu.dmg...${NC}"
+echo -e "${BLUE}[1/4] Downloading latest ${APP_NAME}.dmg...${NC}"
 curl -L -o "$DMG_PATH" "$DMG_URL" --progress-bar
 
 # 2. Mount DMG
@@ -52,17 +53,17 @@ cleanup() {
 trap cleanup EXIT
 
 # 3. Copy Application
-echo -e "${BLUE}[3/4] Installing Mitthu.app to Applications folder...${NC}"
-APP_SOURCE="${MOUNT_POINT}/Mitthu.app"
+echo -e "${BLUE}[3/4] Installing ${APP_NAME}.app to Applications folder...${NC}"
+APP_SOURCE="${MOUNT_POINT}/${APP_NAME}.app"
 
-if [ -d "/Applications/Mitthu.app" ]; then
-    echo "Updating existing installation of Mitthu..."
-    rm -rf "/Applications/Mitthu.app"
+if [ -d "/Applications/${APP_NAME}.app" ]; then
+    echo "Updating existing installation of ${APP_NAME}..."
+    rm -rf "/Applications/${APP_NAME}.app"
 fi
 
 # Try copying. If permission fails, try with sudo.
 if cp -R "$APP_SOURCE" "/Applications/" 2>/dev/null; then
-    echo "Successfully copied Mitthu.app."
+    echo "Successfully copied ${APP_NAME}.app."
 else
     echo -e "${BLUE}Please enter your Mac password to complete the installation:${NC}"
     sudo cp -R "$APP_SOURCE" "/Applications/"
@@ -70,13 +71,13 @@ fi
 
 # 4. De-quarantine
 echo -e "${BLUE}[4/4] Removing Gatekeeper security restrictions...${NC}"
-if xattr -cr "/Applications/Mitthu.app" 2>/dev/null; then
+if xattr -cr "/Applications/${APP_NAME}.app" 2>/dev/null; then
     :
 else
-    sudo xattr -cr "/Applications/Mitthu.app"
+    sudo xattr -cr "/Applications/${APP_NAME}.app"
 fi
 
 echo -e "${GREEN}===============================================${NC}"
-echo -e "${GREEN}      Success! Mitthu is installed.            ${NC}"
+echo -e "${GREEN}      Success! MitthuAI is installed.              ${NC}"
 echo -e "${BLUE}===============================================${NC}"
-echo "You can now open Mitthu from your Applications folder."
+echo "You can now open MitthuAI from your Applications folder."
