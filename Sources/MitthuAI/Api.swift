@@ -83,8 +83,13 @@ final class Api {
             guard !category.isEmpty, !(app.isEmpty && pattern.isEmpty) else {
                 return ("400 Bad Request", ct, Api.json(["error": "need category and app or title_pattern"]), [:])
             }
-            store.addRule(app: app, titlePattern: pattern, category: category)
-            return ("200 OK", ct, Api.json(["ok": true, "rules": store.allRules()]), [:])
+            // Forward-only unless the user ticked "also apply to past activity";
+            // `retagged` is how many recorded events that opt-in actually moved.
+            let backfill = body["backfill"] as? Bool ?? false
+            let retagged = store.addRule(app: app, titlePattern: pattern,
+                                         category: category, backfill: backfill)
+            return ("200 OK", ct, Api.json(["ok": true, "retagged": retagged,
+                                            "rules": store.allRules()]), [:])
 
         case ("POST", "/api/rules/delete"):
             let body = parseBody(req)
@@ -107,6 +112,9 @@ final class Api {
             // plus the stretches macOS reports with no title at all — and
             // tapping its chip is a statement about all of it, not just about
             // whichever tab happened to hold the screen longest.
+            // The dashboard always sends the span; without one there is nothing
+            // on screen being pointed at, so the tap only teaches the title
+            // going forward and no recorded minutes move.
             let from = (body["from"] as? Double) ?? (body["from"] as? Int).map { Double($0) }
             let to = (body["to"] as? Double) ?? (body["to"] as? Int).map { Double($0) }
             if let f = from, let t = to, t > f {
