@@ -102,7 +102,18 @@ final class Api {
             guard !title.isEmpty, !category.isEmpty else {
                 return ("400 Bad Request", ct, Api.json(["error": "need title and category"]), [:])
             }
-            store.categorizeTitle(app: app, title: title, category: category)
+            // The dashboard sends the row's own span along with the title. A
+            // timeline row is a merged session — every tab visited in that app,
+            // plus the stretches macOS reports with no title at all — and
+            // tapping its chip is a statement about all of it, not just about
+            // whichever tab happened to hold the screen longest.
+            let from = (body["from"] as? Double) ?? (body["from"] as? Int).map { Double($0) }
+            let to = (body["to"] as? Double) ?? (body["to"] as? Int).map { Double($0) }
+            if let f = from, let t = to, t > f {
+                store.categorizeSession(app: app, title: title, category: category, from: f, to: t)
+            } else {
+                store.categorizeTitle(app: app, title: title, category: category)
+            }
             return ("200 OK", ct, Api.json(["ok": true]), [:])
 
         case ("GET", "/api/report"):

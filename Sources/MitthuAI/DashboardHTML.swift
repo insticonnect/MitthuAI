@@ -145,6 +145,12 @@ enum DashboardHTML {
   .mini-cell.blank { background: none; cursor: default; }
   .mini-cell.blank:hover { outline: none; }
   .mini-cell.today { outline: 1px solid var(--accent2); color: var(--accent2); font-weight: 700; }
+  details.drop > summary { cursor: pointer; list-style: none; color: var(--dim); font-size: 12px; font-weight: 600; padding: 8px 12px; background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; user-select: none; }
+  details.drop > summary:hover { color: var(--text); border-color: var(--accent); }
+  details.drop > summary::-webkit-details-marker { display: none; }
+  details.drop > summary::before { content: '\25B8  '; }
+  details.drop[open] > summary::before { content: '\25BE  '; }
+  details.drop > .dropbody { padding: 2px 4px 0; }
   a.tlink { color: inherit; text-decoration: underline dotted; text-underline-offset: 3px; }
   a.tlink:hover { color: var(--accent); }
   @media (max-width: 760px) { .cols2 { grid-template-columns: 1fr; } .rule-form { grid-template-columns: 1fr 1fr; } .mini3 { grid-template-columns: 1fr; } .wk-grid { grid-template-columns: repeat(2, 1fr); } }
@@ -191,7 +197,7 @@ enum DashboardHTML {
   </div>
   <div class="section">
     <div class="sechead"><h2>Timeline</h2><button class="btn small ghost" id="sortbtn" onclick="toggleSort()">Newest first ↓</button></div>
-    <p class="hint" style="margin-bottom:8px">Tap a category chip on any row to teach MitthuAI — it re-tags that title everywhere, including activity within ±10 min.</p>
+    <p class="hint" style="margin-bottom:8px">Tap a category chip on any row to teach MitthuAI. The whole row moves — every tab in it, and any stretch played fullscreen — so the donut and focus score above agree with what you just said. The title also becomes a rule, so the same page is tagged on sight next time, and matching activity within ±10 min follows.</p>
     <div id="timeline"><div class="empty">no activity logged for this day</div></div>
   </div>
 </div>
@@ -282,10 +288,14 @@ enum DashboardHTML {
       <span><i style="background:#ff6b6b"></i>Missed</span>
       <span><i style="background:#ffb454"></i>Due today</span>
       <span><i style="background:#7c6cff"></i>Upcoming</span>
-      <span><i style="background:#5b6274"></i>Closed early</span>
+      <span><i style="background:#5b6274"></i>Closed early <b>(kept out of the calendar)</b></span>
     </div>
     <div id="hist-cal"><div class="empty">loading…</div></div>
     <p class="hint" style="margin-top:10px">Click any day to see exactly what happened — and mark revisions as done.</p>
+    <details class="drop hidden" id="hist-closed" style="margin-top:12px">
+      <summary>Closed early <span id="hist-closed-n"></span> — steps that never came round, because you finished or dismissed the item first</summary>
+      <div class="dropbody" id="hist-closed-items"></div>
+    </details>
   </div>
   <div class="section hidden" id="hist-day-box">
     <h2 id="hist-day-title">Day</h2>
@@ -470,17 +480,24 @@ function renderDonut(cats, svgId, legendId) {
 function jsAttr(s) {
   return (s || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
 }
-function catChips(app, title, current) {
+// `from`/`to` are the row's own span: tapping a chip means "this stretch of my
+// day was Study", and a row holds every tab visited in that app plus any
+// fullscreen stretch macOS reported without a title. Sending the span moves all
+// of those minutes together, instead of only the tab on show.
+function catChips(app, title, current, from, to) {
   if (!title && !app) return '';
   const t = jsAttr(title);
   const a = jsAttr(app);
+  const f = +from || 0, e = +to || 0;
   return '<span class="catpick">' + CATEGORIES.map(c =>
-    '<button class="' + (c === current ? 'on' : '') + '" title="Tag as ' + c + '" ' +
-    'onclick="tagTitle(\'' + a + '\',\'' + t + '\',\'' + c + '\')">' + c + '</button>').join('') + '</span>';
+    '<button class="' + (c === current ? 'on' : '') + '" title="Count this whole row as ' + c + '" ' +
+    'onclick="tagTitle(\'' + a + '\',\'' + t + '\',\'' + c + '\',' + f + ',' + e + ')">' + c + '</button>').join('') + '</span>';
 }
 
-async function tagTitle(app, title, cat) {
-  await api('/api/categorize', {method:'POST', body: JSON.stringify({app:app, title:title, category:cat})});
+async function tagTitle(app, title, cat, from, to) {
+  const body = {app:app, title:title, category:cat};
+  if (from && to && to > from) { body.from = from; body.to = to; }
+  await api('/api/categorize', {method:'POST', body: JSON.stringify(body)});
   loadToday();
 }
 
@@ -543,10 +560,22 @@ function renderTimeline() {
     return '<div class="sess' + (s.is_idle ? ' idle' : '') + '">' +
     '<span class="t">' + fmtTime(s.ts_start) + '–' + fmtTime(s.ts_end) + '</span>' +
     '<span class="app">' + esc(s.app) + '</span>' +
-    '<span class="title"' + tip + '>' + esc(s.title) + tabHint + '</span>' +
+    '<span class="title"' + tip + '>' + esc(s.title) + tabHint + mixedHint(s) + '</span>' +
     '<span class="dur">' + fmtDur(s.duration) + '</span>' +
-    (s.is_idle ? '' : catChips(s.app, s.title, s.category)) + '</div>';
+    (s.is_idle ? '' : catChips(s.app, s.title, s.category, s.ts_start, s.ts_end)) + '</div>';
   }).join('');
+}
+
+// A row whose minutes are split between buckets says so, and hovering breaks it
+// down. The chip shows where most of the row sits; without this a part-Study
+// row looked wholly Study while the donut counted the rest elsewhere.
+function mixedHint(s) {
+  const cs = s.category_secs || {};
+  const names = Object.keys(cs).filter(k => cs[k] > 0);
+  if (names.length < 2) return '';
+  if ((cs[s.category] || 0) >= s.duration * 0.98) return '';
+  const detail = names.sort((a, b) => cs[b] - cs[a]).map(k => k + ' ' + fmtDur(cs[k])).join('\n');
+  return ' <span class="hint" title="' + esc(detail).replace(/"/g, '&quot;') + '">· mixed</span>';
 }
 
 function toggleSort() {
@@ -896,6 +925,7 @@ async function loadHistory() {
   });
   renderHistCards(histStats(cur.items || []), histStats(prev.items || []));
   document.getElementById('hist-cmp-box').classList.toggle('hidden', histMode !== '3mo');
+  renderClosed();
   redrawCal(s);
   if (histMode === '3mo') renderCmp(s);
   if (histSelDay) showDay(histSelDay);
@@ -908,6 +938,33 @@ function redrawCal(s) {
   if (histMode === 'week') cal.innerHTML = weekHTML(s);
   else if (histMode === 'month') cal.innerHTML = monthHTML(s.getFullYear(), s.getMonth(), false);
   else cal.innerHTML = threeMoHTML(s);
+}
+
+// A step that was closed early never happened and never will — it is there to
+// explain a gap, not to fill the calendar. The days keep only what you actually
+// did or still owe; the closed ones wait in the dropdown below.
+function dayItems(k) { return (histByDay[k] || []).filter(it => it.status !== 'closed'); }
+
+function renderClosed() {
+  const all = [];
+  Object.keys(histByDay).forEach(k => histByDay[k].forEach(it => {
+    if (it.status === 'closed') all.push(it);
+  }));
+  all.sort((a, b) => a.ts - b.ts);
+  const box = document.getElementById('hist-closed');
+  box.classList.toggle('hidden', all.length === 0);
+  if (!all.length) { box.open = false; return; }
+  document.getElementById('hist-closed-n').textContent = '(' + all.length + ')';
+  document.getElementById('hist-closed-items').innerHTML = all.map(it => {
+    const k = todayStr(new Date(it.ts * 1000));
+    return '<div class="fact" style="cursor:pointer" onclick="showDay(\'' + k + '\')">' +
+      '<span class="hint" style="min-width:130px">' + esc(k) + ' ' + fmtTime(it.ts) + '</span>' +
+      '<span class="title">' + histIcon(it) + ' ' + linkTitle(it.title, it.url) +
+      ((it.type === 'revision' && it.interval_idx >= 0)
+        ? ' <span class="hint">revision ' + (it.interval_idx + 1) + ' of 5</span>' : '') +
+      (it.note ? '<span class="sub"><span class="note">' + esc(it.note) + '</span></span>' : '') +
+      '</span></div>';
+  }).join('');
 }
 
 function histStats(items) {
@@ -938,7 +995,7 @@ function weekHTML(s) {
   for (let i = 0; i < 7; i++) {
     const d = new Date(s.getFullYear(), s.getMonth(), s.getDate() + i);
     const k = todayStr(d);
-    const items = (histByDay[k] || []).slice().sort((a, b) => a.ts - b.ts);
+    const items = dayItems(k).slice().sort((a, b) => a.ts - b.ts);
     const chips = items.slice(0, 8).map(it =>
       '<div class="hchip"><i style="background:' + histColor(it) + '"></i><span>' + histIcon(it) + ' ' + linkTitle(it.title, it.url) + '</span></div>').join('') +
       (items.length > 8 ? '<div class="cal-more">+' + (items.length - 8) + ' more</div>' : '');
@@ -958,7 +1015,7 @@ function monthHTML(y, mo, mini) {
   for (let i = 0; i < lead; i++) cells += mini ? '<div class="mini-cell blank"></div>' : '<div class="cal-cell blank"></div>';
   for (let d = 1; d <= nDays; d++) {
     const k = todayStr(new Date(y, mo, d));
-    const items = histByDay[k] || [];
+    const items = dayItems(k);
     if (mini) {
       let bg = '';
       if (items.some(i => i.status === 'missed')) bg = HIST_COLORS.missed;
@@ -1060,7 +1117,7 @@ function showDay(k) {
   document.getElementById('hist-day-title').textContent =
     d.toLocaleDateString(undefined, {weekday:'long', year:'numeric', month:'long', day:'numeric'});
   box.classList.remove('hidden');
-  document.getElementById('hist-day-items').innerHTML = items.length ? items.map(it => {
+  function rowHTML(it) {
     const revN = (it.type === 'revision' && it.interval_idx >= 0)
       ? ' <span class="hint">revision ' + (it.interval_idx + 1) + ' of 5</span>' : '';
     const wsecs = (it.type === 'watched' && it.watch_secs >= 30)
@@ -1076,7 +1133,16 @@ function showDay(k) {
     return '<div class="fact"><span class="pill" style="color:' + histColor(it) + '">' + histStatusLabel(it) + '</span>' +
       '<span class="hint" style="min-width:70px">' + fmtTime(it.ts) + '</span>' +
       '<span class="title">' + histIcon(it) + ' ' + linkTitle(it.title, it.url) + revN + wsecs + sub + '</span>' + actions + '</div>';
-  }).join('') : '<div class="empty">nothing on this day</div>';
+  }
+  const live = items.filter(it => it.status !== 'closed');
+  const closed = items.filter(it => it.status === 'closed');
+  let html = live.length ? live.map(rowHTML).join('') : '<div class="empty">nothing on this day</div>';
+  if (closed.length) {
+    html += '<details class="drop" style="margin-top:12px"><summary>' + closed.length + ' closed early' +
+      ' — scheduled for this day, then dropped when you finished or dismissed the item</summary>' +
+      '<div class="dropbody">' + closed.map(rowHTML).join('') + '</div></details>';
+  }
+  document.getElementById('hist-day-items').innerHTML = html;
   if (histMode !== '3mo') redrawCal(); // refresh the selection highlight
 }
 

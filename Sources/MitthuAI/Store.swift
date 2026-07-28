@@ -70,6 +70,13 @@ final class Store {
         );
         """)
 
+        // Hand-tagged events. Tapping a category chip on a timeline row is a
+        // statement about that stretch of the day, not a guess — so it is
+        // marked, and rule churn afterwards leaves it alone.
+        if !columnExists(table: "events", column: "manual_category") {
+            db.exec("ALTER TABLE events ADD COLUMN manual_category INTEGER DEFAULT 0;")
+        }
+
         db.exec("""
         CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(text, content='chunks', content_rowid='id');
         """)
@@ -85,6 +92,10 @@ final class Store {
         """)
 
         seedDefaultRules()
+    }
+
+    private func columnExists(table: String, column: String) -> Bool {
+        return db.query("PRAGMA table_info(\(table))").contains { $0.str("name") == column }
     }
 
     // MARK: - Categorization rules (user-defined)
@@ -139,7 +150,9 @@ final class Store {
 
     /// Add a rule, then retroactively re-tag matching past events. Also pulls
     /// in same-title activity within ±10 minutes of any match (so a video you
-    /// flicked away from and back to lands in one category).
+    /// flicked away from and back to lands in one category). Stretches the user
+    /// tagged by hand are left alone — a rule is a general statement, a chip tap
+    /// is a specific one, and the specific one wins.
     func addRule(app: String, titlePattern: String, category: String) {
         db.run("INSERT INTO rules (app, title_pattern, category) VALUES (?, ?, ?)",
                [app, titlePattern, category])
@@ -151,7 +164,7 @@ final class Store {
         guard !conds.isEmpty else { return }
         let whereClause = conds.joined(separator: " AND ")
 
-        db.run("UPDATE events SET category = ? WHERE is_idle = 0 AND \(whereClause)", params)
+        db.run("UPDATE events SET category = ? WHERE is_idle = 0 AND manual_category = 0 AND \(whereClause)", params)
 
         // ±10-minute same-title expansion.
         let matched = db.query("SELECT DISTINCT title, ts_start, ts_end FROM events WHERE is_idle = 0 AND \(whereClause)",
@@ -161,7 +174,7 @@ final class Store {
             guard !title.isEmpty else { continue }
             db.run("""
                 UPDATE events SET category = ?
-                WHERE is_idle = 0 AND title = ?
+                WHERE is_idle = 0 AND manual_category = 0 AND title = ?
                   AND ts_start >= ? AND ts_start <= ?
                 """, [category, title, m.double("ts_start") - 600, m.double("ts_end") + 600])
         }
@@ -170,7 +183,9 @@ final class Store {
     /// Tag a single observed title directly ("this video is Study"): REPLACES any
     /// existing rule for that exact app+title (so re-tapping a different category
     /// actually switches it, instead of stacking a conflicting rule), then
-    /// re-tags matching history.
+    /// re-tags matching history. The title's own events are marked hand-tagged,
+    /// so a broader rule — including the built-in "Safari + YouTube →
+    /// Entertainment" — can never take this title back off you.
     func categorizeTitle(app: String, title: String, category: String) {
         // Drop any prior exact-title rule for this app so only one wins.
         db.run("DELETE FROM rules WHERE app = ? AND title_pattern = ?", [app, title])
@@ -178,21 +193,56 @@ final class Store {
         // Directly re-tag this exact title too (covers app-agnostic matches and
         // ensures an immediate switch even if the LIKE expansion missed edges).
         if app.isEmpty {
-            db.run("UPDATE events SET category = ? WHERE is_idle = 0 AND title = ?", [category, title])
+            db.run("UPDATE events SET category = ?, manual_category = 1 WHERE is_idle = 0 AND title = ?",
+                   [category, title])
         } else {
-            db.run("UPDATE events SET category = ? WHERE is_idle = 0 AND app = ? AND title = ?",
+            db.run("UPDATE events SET category = ?, manual_category = 1 WHERE is_idle = 0 AND app = ? AND title = ?",
                    [category, app, title])
         }
     }
 
+    /// What tapping a chip on a timeline row actually means: *this stretch of my
+    /// day was Study*. A row is a merged session, not one title — it holds every
+    /// tab visited in that app, plus the stretches macOS reports with no title at
+    /// all (which is what a video playing fullscreen looks like). Tagging only the
+    /// headline title moved a fraction of the row's minutes and left the rest
+    /// counted as whatever they were, so a row could read "Study" while the donut
+    /// and the focus score still called it Other. Everything inside the row's own
+    /// span moves together, and the headline title still becomes a rule so the
+    /// same page is categorized on sight next time.
+    func categorizeSession(app: String, title: String, category: String,
+                           from: Double, to: Double) {
+        categorizeTitle(app: app, title: title, category: category)
+        guard to > from else { return }
+        var sql = """
+            UPDATE events SET category = ?, manual_category = 1
+            WHERE is_idle = 0 AND ts_start >= ? AND ts_start <= ?
+            """
+        var params: [Any?] = [category, from, to]
+        if !app.isEmpty { sql += " AND app = ?"; params.append(app) }
+        db.run(sql, params)
+    }
+
     func deleteRule(id: Int) {
+        // Deleting the very rule a chip tap created is the user taking that tap
+        // back, so those events give up their hand-tagged protection and fall
+        // back to whatever the remaining rules say.
+        if let r = db.query("SELECT app, title_pattern FROM rules WHERE id = ?", [id]).first {
+            let app = r.str("app"), pattern = r.str("title_pattern")
+            if !pattern.isEmpty && app.isEmpty {
+                db.run("UPDATE events SET manual_category = 0 WHERE title = ?", [pattern])
+            } else if !pattern.isEmpty {
+                db.run("UPDATE events SET manual_category = 0 WHERE app = ? AND title = ?", [app, pattern])
+            }
+        }
         db.run("DELETE FROM rules WHERE id = ?", [id])
         recategorizeAll()
     }
 
-    /// Recompute every non-idle event's category from the current rule set.
+    /// Recompute every non-idle event's category from the current rule set,
+    /// leaving hand-tagged stretches as the user set them.
     private func recategorizeAll() {
-        let events = db.query("SELECT id, app, title, url FROM events WHERE is_idle = 0")
+        let events = db.query("SELECT id, app, title, url FROM events WHERE is_idle = 0 AND manual_category = 0")
         for e in events {
             let cat = categoryFor(app: e.str("app"), title: e.str("title"), url: e.str("url"))
             db.run("UPDATE events SET category = ? WHERE id = ?", [cat, e.int("id")])
@@ -356,11 +406,19 @@ final class Store {
             var tsStart = 0.0, tsEnd = 0.0, duration = 0.0
             var titles: [String] = []                                       // first-appearance order
             var perTitle: [String: (secs: Double, category: String, url: String)] = [:]
+            var perCategory: [String: Double] = [:]                         // seconds by category, EVERY event
             var fallbackCategory = "", fallbackURL = ""                     // for title-less sessions (Idle, bare windows)
 
             mutating func absorb(_ ev: [String: Any]) {
                 tsEnd = ev.double("ts_end")
                 duration += ev.double("duration")
+                // Tallied for every event, titled or not. A video playing
+                // fullscreen reports no window title, and those minutes used to
+                // fall out of the row's category altogether — which is how a row
+                // could show "Study" while most of its time was still being
+                // counted as something else.
+                let category = ev.str("category")
+                if !category.isEmpty { perCategory[category, default: 0] += ev.double("duration") }
                 let title = ev.str("title")
                 guard !title.isEmpty else { return }
                 if !titles.contains(title) && titles.count < 8 { titles.append(title) }
@@ -371,14 +429,23 @@ final class Store {
                 perTitle[title] = t
             }
 
-            // Category and url follow the dominant title, so the timeline's
-            // chip highlight and link match the title on show. Ties go to the
-            // earlier-seen title.
+            // Title and url follow the dominant tab, so the row reads as the
+            // thing that actually held the screen (ties go to the earlier-seen
+            // title). The *category* follows the seconds instead — whichever
+            // bucket owns most of the row — so the chip on show and the donut
+            // beside it can never tell two different stories. A tie goes to the
+            // headline title's own category.
             var asDict: [String: Any] {
                 let top = perTitle.max { a, b in
                     a.value.secs != b.value.secs
                         ? a.value.secs < b.value.secs
                         : (titles.firstIndex(of: a.key) ?? 0) > (titles.firstIndex(of: b.key) ?? 0)
+                }
+                var category = top?.value.category ?? fallbackCategory
+                var best = perCategory[category] ?? 0
+                for (name, secs) in perCategory.sorted(by: { $0.key < $1.key }) where secs > best {
+                    category = name
+                    best = secs
                 }
                 return [
                     "app": app,
@@ -387,7 +454,8 @@ final class Store {
                     "ts_start": tsStart,
                     "ts_end": tsEnd,
                     "duration": duration,
-                    "category": top?.value.category ?? fallbackCategory,
+                    "category": category,
+                    "category_secs": perCategory,
                     "url": top?.value.url ?? fallbackURL,
                     "is_idle": isIdle
                 ]
@@ -567,24 +635,33 @@ final class Store {
     /// across every lecture, so the URL is the video's identity — falling back
     /// to the title for browsers that expose no URL. A match inside the window
     /// accumulates watch seconds; outside it, a re-watch is a fresh entry.
+    ///
+    /// The URL arrives canonical (see `Extractors.canonicalURL`): players and
+    /// portals decorate the same address differently on every visit —
+    /// `&themeRefresh=1`, `&t=42`, `&embeds_referring_euri=…` — and comparing
+    /// those raw made one lecture look like several videos, each with a slice
+    /// of the time actually spent on it.
     func recordWatch(title: String, url: String?, source: String, secs: Double,
                      ts: Double) -> (id: Int64, isNew: Bool)? {
         let windowStart = Date().timeIntervalSince1970 - 86400
         let existing: [[String: Any]]
         if let u = url, !u.isEmpty {
             existing = db.query("""
-                SELECT id FROM facts WHERE kind = 'watched' AND detail = ? AND created_ts >= ?
+                SELECT id, title FROM facts WHERE kind = 'watched' AND detail = ? AND created_ts >= ?
                 ORDER BY created_ts DESC LIMIT 1
                 """, [u, windowStart])
         } else {
             existing = db.query("""
-                SELECT id FROM facts WHERE kind = 'watched' AND title = ? AND created_ts >= ?
+                SELECT id, title FROM facts WHERE kind = 'watched' AND title = ? AND created_ts >= ?
                 ORDER BY created_ts DESC LIMIT 1
                 """, [title, windowStart])
         }
         if let row = existing.first {
             let id = Int64(row.int("id"))
             db.run("UPDATE facts SET watch_secs = watch_secs + ? WHERE id = ?", [max(0, secs), id])
+            // The stretch that opened the entry may have had no title to give
+            // (fullscreen); once macOS names the video, the entry takes the name.
+            if row.str("title").isEmpty && !title.isEmpty { setFactTitle(id: id, title: title) }
             return (id, false)
         }
         let id = db.run("""

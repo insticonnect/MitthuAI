@@ -26,10 +26,22 @@ final class Tracker: ObservableObject {
     /// when there is one (an SPA portal keeps one title for every lecture),
     /// else by title. `credited` is how much of `total` has already been
     /// written to the Brain entry, so repeated session closes with a growing
-    /// total never double-count. An entry dies after 10 minutes out of sight
-    /// (the rules engine uses the same ±10 min).
+    /// total never double-count. `title` is the most descriptive name macOS
+    /// gave this video — a fullscreen stretch gives none, and "" is not what
+    /// belongs in Brain. An entry dies after 10 minutes out of sight (the
+    /// rules engine uses the same ±10 min).
     private var dwell: [String: (total: Double, signals: Extractors.PlayerSignals,
-                                 firstTs: Double, lastSeen: Double, credited: Double)] = [:]
+                                 firstTs: Double, lastSeen: Double, credited: Double,
+                                 title: String)] = [:]
+
+    /// The last title macOS gave us for the app in front. Going fullscreen —
+    /// which is what watching a lecture properly looks like — leaves the window
+    /// with no title of its own, and an untitled event is one no rule, no
+    /// category chip and no watch timer can reach: its minutes land in a blank
+    /// bucket and stay there. While the same app holds the screen, the page it
+    /// was last on is a far better answer than nothing.
+    private var lastTitledApp = ""
+    private var carriedTitle = ""
 
     private let idleThreshold: TimeInterval = 300
 
@@ -90,6 +102,15 @@ final class Tracker: ObservableObject {
                 activeTitle = details.title
                 // URL is carried on `lastURL`, refreshed by ContentCapture and
                 // read directly in saveCurrentEvent().
+            }
+        }
+
+        if !nowIsIdle && activeApp != "Idle" {
+            if !activeTitle.isEmpty {
+                lastTitledApp = activeApp
+                carriedTitle = activeTitle
+            } else if activeApp == lastTitledApp {
+                activeTitle = carriedTitle       // fullscreen: same page, no title
             }
         }
 
@@ -155,17 +176,27 @@ final class Tracker: ObservableObject {
         // counting; 60s is the floor detectWatched could possibly accept, and
         // its evidence-strength thresholds still apply to the total. Only the
         // uncredited slice is handed over, so the Brain entry's minutes grow
-        // by exactly what was newly watched.
-        if !lastIsIdle && !lastWindowTitle.isEmpty {
+        // by exactly what was newly watched. A URL is enough to go on by
+        // itself: fullscreen playback is exactly the stretch that arrives with
+        // no window title, and requiring one skipped it outright — the lecture
+        // actually sat through was the one thing Brain never heard about.
+        let canonical = Extractors.canonicalURL(lastURL) ?? ""
+        if !lastIsIdle && (!lastWindowTitle.isEmpty || !canonical.isEmpty) {
             let nowTs = now.timeIntervalSince1970
-            let key = lastAppName + "|" + lastWindowTitle + "|" + (lastURL ?? "")
+            // One video, one key. The old key mixed in the window title, so
+            // going fullscreen — or the player rewriting its own address — split
+            // a single lecture into pieces that each restarted the watch clock
+            // and never cleared the bar to be recorded at all.
+            let key = canonical.isEmpty ? "t|" + lastAppName + "|" + lastWindowTitle
+                                        : "u|" + lastAppName + "|" + canonical
             var d = dwell[key] ?? (0, Extractors.PlayerSignals(),
-                                   lastEventStart.timeIntervalSince1970, nowTs, 0)
+                                   lastEventStart.timeIntervalSince1970, nowTs, 0, "")
             d.total += duration
             d.signals = d.signals.merging(sessionSignals)
             d.lastSeen = nowTs
+            if lastWindowTitle.count > d.title.count { d.title = lastWindowTitle }
             if d.total >= 60 {
-                let recorded = Extractors.detectWatched(app: lastAppName, title: lastWindowTitle,
+                let recorded = Extractors.detectWatched(app: lastAppName, title: d.title,
                                                         url: lastURL, ts: d.firstTs,
                                                         duration: d.total, newSecs: d.total - d.credited,
                                                         signals: d.signals, store: store)
