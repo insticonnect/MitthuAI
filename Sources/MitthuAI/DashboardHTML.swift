@@ -197,7 +197,7 @@ enum DashboardHTML {
   </div>
   <div class="section">
     <div class="sechead"><h2>Timeline</h2><button class="btn small ghost" id="sortbtn" onclick="toggleSort()">Newest first ↓</button></div>
-    <p class="hint" style="margin-bottom:8px">Tap a category chip on any row to teach MitthuAI. The whole row moves — every tab in it, and any stretch played fullscreen — so the donut and focus score above agree with what you just said. The title also becomes a rule, so the same page is tagged on sight next time, and matching activity within ±10 min follows.</p>
+    <p class="hint" style="margin-bottom:8px">Tap a category chip on any row to teach MitthuAI. <b>That row</b> moves in full — every tab in it, and any stretch played fullscreen — so the donut and focus score above agree with what you just said, and identical activity within ±10 min follows it. Other days keep their own labels; tap them if you want them changed. The title also becomes a rule, so the same page is tagged on sight from now on.</p>
     <div id="timeline"><div class="empty">no activity logged for this day</div></div>
   </div>
 </div>
@@ -312,6 +312,7 @@ enum DashboardHTML {
   <div class="section">
     <h2>Create categorization rule</h2>
     <p class="hint" style="margin-bottom:12px">Automatically tag activity. Group related study portals and videos under the same category so they count as focus, not multitasking. Leave a field blank to match anything.</p>
+    <p class="hint" style="margin-bottom:12px"><b>A rule applies from now on.</b> Days already recorded keep the labels they were given, so writing a rule today never redraws last week's numbers behind your back — and deleting a rule doesn't change past days either.</p>
     <div class="rule-form">
       <div><label>Application name</label><input type="text" id="rule-app" placeholder="e.g. Safari"></div>
       <div><label>Window title contains</label><input type="text" id="rule-title" placeholder="e.g. YouTube"></div>
@@ -321,6 +322,11 @@ enum DashboardHTML {
       </div>
       <button class="btn" onclick="addRule()">Apply rule</button>
     </div>
+    <label class="hint" style="display:flex;align-items:flex-start;gap:8px;margin-top:14px;cursor:pointer">
+      <input type="checkbox" id="rule-backfill" style="width:auto;margin-top:2px">
+      <span>Also apply to past activity — re-labels every day already recorded that matches this rule. Anything you tagged by hand on the timeline is left alone. <b>This can't be undone by deleting the rule.</b></span>
+    </label>
+    <p class="hint" id="rule-msg" style="margin-top:10px">&nbsp;</p>
   </div>
   <div class="section">
     <h2>Active categorization rules</h2>
@@ -603,16 +609,25 @@ async function addRule() {
   const title = document.getElementById('rule-title').value.trim();
   const cat = document.getElementById('rule-cat').value.trim();
   if (!cat || (!app && !title)) { alert('Enter a category and at least an app or title.'); return; }
-  await api('/api/rules', {method:'POST', body: JSON.stringify({app:app, title_pattern:title, category:cat})});
+  const backfill = document.getElementById('rule-backfill').checked;
+  if (backfill && !confirm('Re-label every past day matching this rule as "' + cat + '"?\n\nDeleting the rule afterwards will not undo it.')) return;
+  const r = await api('/api/rules', {method:'POST',
+    body: JSON.stringify({app:app, title_pattern:title, category:cat, backfill:backfill})});
   document.getElementById('rule-app').value = '';
   document.getElementById('rule-title').value = '';
   document.getElementById('rule-cat').value = '';
+  document.getElementById('rule-backfill').checked = false;
+  const n = (r && r.retagged) || 0;
+  document.getElementById('rule-msg').textContent = backfill
+    ? 'Rule saved — ' + n + ' recorded event' + (n === 1 ? '' : 's') + ' re-labelled ' + cat + '.'
+    : 'Rule saved — it tags activity from now on. Days already recorded are unchanged.';
   loadRules();
 }
 
 async function delRule(id) {
-  if (!confirm('Delete this rule? Affected activity will be re-categorized.')) return;
+  if (!confirm('Delete this rule? New activity stops matching it. Days already recorded keep the labels they were given — deleting a rule never changes the past.')) return;
   await api('/api/rules/delete', {method:'POST', body: JSON.stringify({id:id})});
+  document.getElementById('rule-msg').textContent = 'Rule deleted — past days are untouched.';
   loadRules();
 }
 

@@ -148,27 +148,54 @@ final class Store {
         return Extractors.heuristicCategory(app: app, title: title, url: url)
     }
 
-    /// Add a rule, then retroactively re-tag matching past events. Also pulls
-    /// in same-title activity within ±10 minutes of any match (so a video you
-    /// flicked away from and back to lands in one category). Stretches the user
-    /// tagged by hand are left alone — a rule is a general statement, a chip tap
-    /// is a specific one, and the specific one wins.
-    func addRule(app: String, titlePattern: String, category: String) {
+    /// Save a rule. It labels activity **from now on** — every event is
+    /// categorized as it is captured (`insertEvent` → `categoryFor`), so a new
+    /// rule needs to do nothing else to take effect. Days already recorded keep
+    /// the labels they were recorded with, so writing a rule today can't quietly
+    /// redraw last week's donut, focus score or Trends.
+    ///
+    /// `backfill` is the opt-in escape hatch, for when re-labelling the past is
+    /// exactly what you meant. Returns how many past events it changed (0 when
+    /// forward-only).
+    @discardableResult
+    func addRule(app: String, titlePattern: String, category: String,
+                 backfill: Bool = false) -> Int {
         db.run("INSERT INTO rules (app, title_pattern, category) VALUES (?, ?, ?)",
                [app, titlePattern, category])
+        guard backfill else { return 0 }
+        return retagHistory(app: app, titlePattern: titlePattern, category: category)
+    }
 
+    /// Re-label past activity matching a rule, pulling in same-title activity
+    /// within ±10 minutes of any match (so a video you flicked away from and
+    /// back to lands in one category). Only ever runs when asked for — see
+    /// `addRule(backfill:)`.
+    ///
+    /// Stretches the user tagged by hand are left alone: a rule is a general
+    /// statement, a chip tap is a specific one, and the specific one wins.
+    /// Returns the number of events whose category actually changed.
+    @discardableResult
+    func retagHistory(app: String, titlePattern: String, category: String) -> Int {
         var conds: [String] = []
-        var params: [Any?] = [category]
-        if !app.isEmpty { conds.append("app = ?"); params.append(app) }
-        if !titlePattern.isEmpty { conds.append("title LIKE '%' || ? || '%'"); params.append(titlePattern) }
-        guard !conds.isEmpty else { return }
+        var whereParams: [Any?] = []
+        if !app.isEmpty { conds.append("app = ?"); whereParams.append(app) }
+        if !titlePattern.isEmpty { conds.append("title LIKE '%' || ? || '%'"); whereParams.append(titlePattern) }
+        guard !conds.isEmpty else { return 0 }
         let whereClause = conds.joined(separator: " AND ")
+
+        var params: [Any?] = [category]
+        params.append(contentsOf: whereParams)
+
+        let changed = db.query("""
+            SELECT COUNT(*) AS n FROM events
+            WHERE is_idle = 0 AND manual_category = 0 AND category != ? AND \(whereClause)
+            """, params).first?.int("n") ?? 0
 
         db.run("UPDATE events SET category = ? WHERE is_idle = 0 AND manual_category = 0 AND \(whereClause)", params)
 
         // ±10-minute same-title expansion.
         let matched = db.query("SELECT DISTINCT title, ts_start, ts_end FROM events WHERE is_idle = 0 AND \(whereClause)",
-                               Array(params.dropFirst()))
+                               whereParams)
         for m in matched {
             let title = m.str("title")
             guard !title.isEmpty else { continue }
@@ -178,27 +205,20 @@ final class Store {
                   AND ts_start >= ? AND ts_start <= ?
                 """, [category, title, m.double("ts_start") - 600, m.double("ts_end") + 600])
         }
+        return changed
     }
 
-    /// Tag a single observed title directly ("this video is Study"): REPLACES any
-    /// existing rule for that exact app+title (so re-tapping a different category
-    /// actually switches it, instead of stacking a conflicting rule), then
-    /// re-tags matching history. The title's own events are marked hand-tagged,
-    /// so a broader rule — including the built-in "Safari + YouTube →
-    /// Entertainment" — can never take this title back off you.
+    /// Learn a title ("this video is Study"): REPLACES any existing rule for that
+    /// exact app+title, so re-tapping a different category switches it instead of
+    /// stacking a conflicting rule. Forward-only, like every rule — it says what
+    /// this title means from now on and rewrites no history of its own.
+    ///
+    /// Re-labelling the minutes you are looking at is `categorizeSession`'s job,
+    /// scoped to the row you tapped.
     func categorizeTitle(app: String, title: String, category: String) {
         // Drop any prior exact-title rule for this app so only one wins.
         db.run("DELETE FROM rules WHERE app = ? AND title_pattern = ?", [app, title])
         addRule(app: app, titlePattern: title, category: category)
-        // Directly re-tag this exact title too (covers app-agnostic matches and
-        // ensures an immediate switch even if the LIKE expansion missed edges).
-        if app.isEmpty {
-            db.run("UPDATE events SET category = ?, manual_category = 1 WHERE is_idle = 0 AND title = ?",
-                   [category, title])
-        } else {
-            db.run("UPDATE events SET category = ?, manual_category = 1 WHERE is_idle = 0 AND app = ? AND title = ?",
-                   [category, app, title])
-        }
     }
 
     /// What tapping a chip on a timeline row actually means: *this stretch of my
@@ -210,10 +230,16 @@ final class Store {
     /// and the focus score still called it Other. Everything inside the row's own
     /// span moves together, and the headline title still becomes a rule so the
     /// same page is categorized on sight next time.
+    ///
+    /// This is the one place that reaches backwards without being asked, and it
+    /// reaches exactly as far as the row you tapped: you are pointing at those
+    /// minutes on screen and saying what they were. Other days keep the labels
+    /// they were recorded with — tap them too if you want them changed.
     func categorizeSession(app: String, title: String, category: String,
                            from: Double, to: Double) {
         categorizeTitle(app: app, title: title, category: category)
         guard to > from else { return }
+
         var sql = """
             UPDATE events SET category = ?, manual_category = 1
             WHERE is_idle = 0 AND ts_start >= ? AND ts_start <= ?
@@ -221,32 +247,30 @@ final class Store {
         var params: [Any?] = [category, from, to]
         if !app.isEmpty { sql += " AND app = ?"; params.append(app) }
         db.run(sql, params)
+
+        // ±10 minutes either side of the row, for the titles that were in it: a
+        // video you flicked away from and back to is one thing, not two, and the
+        // gap is often just wider than the 3-minute merge that built the row.
+        var titlesSQL = "SELECT DISTINCT title FROM events WHERE is_idle = 0 AND ts_start >= ? AND ts_start <= ?"
+        var titleParams: [Any?] = [from, to]
+        if !app.isEmpty { titlesSQL += " AND app = ?"; titleParams.append(app) }
+        for row in db.query(titlesSQL, titleParams) {
+            let rowTitle = row.str("title")
+            guard !rowTitle.isEmpty else { continue }
+            db.run("""
+                UPDATE events SET category = ?, manual_category = 1
+                WHERE is_idle = 0 AND title = ? AND ts_start >= ? AND ts_start <= ?
+                """, [category, rowTitle, from - 600, to + 600])
+        }
     }
 
+    /// Stop a rule applying to new activity. Days already recorded keep the
+    /// labels they were given: a rule never reaches backwards unless asked, and
+    /// deleting one doesn't reach backwards either. (Which means an opt-in
+    /// backfill is not undone by deleting the rule that performed it — the
+    /// dashboard says so before you tick the box.)
     func deleteRule(id: Int) {
-        // Deleting the very rule a chip tap created is the user taking that tap
-        // back, so those events give up their hand-tagged protection and fall
-        // back to whatever the remaining rules say.
-        if let r = db.query("SELECT app, title_pattern FROM rules WHERE id = ?", [id]).first {
-            let app = r.str("app"), pattern = r.str("title_pattern")
-            if !pattern.isEmpty && app.isEmpty {
-                db.run("UPDATE events SET manual_category = 0 WHERE title = ?", [pattern])
-            } else if !pattern.isEmpty {
-                db.run("UPDATE events SET manual_category = 0 WHERE app = ? AND title = ?", [app, pattern])
-            }
-        }
         db.run("DELETE FROM rules WHERE id = ?", [id])
-        recategorizeAll()
-    }
-
-    /// Recompute every non-idle event's category from the current rule set,
-    /// leaving hand-tagged stretches as the user set them.
-    private func recategorizeAll() {
-        let events = db.query("SELECT id, app, title, url FROM events WHERE is_idle = 0 AND manual_category = 0")
-        for e in events {
-            let cat = categoryFor(app: e.str("app"), title: e.str("title"), url: e.str("url"))
-            db.run("UPDATE events SET category = ? WHERE id = ?", [cat, e.int("id")])
-        }
     }
 
     func focusStatsForDate(_ dateStr: String) -> (focus: Double, multitask: Double) {

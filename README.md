@@ -83,13 +83,21 @@ a few minutes of use before the timeline fills in.
 
 - **Today** — active/idle time, focus-vs-multitasking score, category donut, top
   apps, and a session timeline with inline Study/Entertainment/Work/Other chips.
+  Tapping a chip moves that whole row — every tab in it, and any stretch played
+  fullscreen — so the donut and focus score agree with what you just said.
 - **Search** — hybrid semantic + keyword search with date filters.
 - **Brain** — open bills, deadlines, watched videos and notes; upcoming
   reminders; editable per-item notes; one entry per video per 24 hours with
   total watch time.
 - **History** — revision calendar (Week / Month / 3-Month) with `.ics` export
-  and one-click Google Calendar links.
-- **Rules** — app + title-contains → category; re-tags matching history at once.
+  and one-click Google Calendar links. Steps closed early — scheduled revisions
+  dropped because you finished the item first — sit in a dropdown rather than
+  filling the days.
+- **Rules** — app + title-contains → category, applied **from now on**: days
+  already recorded keep their labels, and deleting a rule doesn't change the
+  past either. Tick *also apply to past activity* to re-tag matching history —
+  it skips anything you tagged by hand, reports how many events moved, and is
+  not undone by deleting the rule.
 - **Settings** — pause, login item, video sources, excluded apps, capture
   toggles, data purge, MCP setup, and the recent video/date decisions with the
   score and reason behind each one.
@@ -99,11 +107,22 @@ collects — an on-screen player timecode, a native player app, play/pause and
 seek controls in the accessibility tree, audio playing, the display held awake,
 a video-shaped URL, a known or learning host. Three points (with at least one
 signal from the window itself) makes it a video, so an embedded lecture player
-counts and an idle YouTube homepage does not. Study-looking material auto-enrols
-in a **1/3/7/14/30-day revision ladder**. Deadlines come from **NSDataDetector**
-anchored to the deadline phrase, never guessing a written year, flagging
-ambiguous `12/09/2026`-style dates as *check date*, and capped at one item per
-kind per due day per screen.
+counts and an idle YouTube homepage does not. Fullscreen playback counts too:
+that window reports no title, so the title falls back to what the app still has
+open and watch time is tallied per *video* rather than per window title. Video
+identity is the address's meaning, not its letters — every shape of YouTube link
+collapses to its video id — so one lecture stays one entry with all its minutes
+on it. Study-looking material auto-enrols in a **1/3/7/14/30-day revision
+ladder**. Deadlines come from **NSDataDetector** anchored to the deadline phrase,
+never guessing a written year, flagging ambiguous `12/09/2026`-style dates as
+*check date*, and capped at one item per kind per due day per screen.
+
+**How categories are decided.** Your own chip taps win, then your rules, then a
+built-in heuristic; Study + Work count as *focus*. The label is written when the
+activity is captured, so a rule changes what gets recorded next, not what was
+recorded already — which does mean a Trends range spanning the day you wrote a
+rule mixes old and new labels. Tick **also apply to past activity** on the rule
+form when you'd rather have the whole range agree.
 
 ## Connect Claude (MCP)
 
