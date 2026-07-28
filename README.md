@@ -111,11 +111,14 @@ counts and an idle YouTube homepage does not. Watch time is tallied per *video*
 rather than per window title, so going fullscreen mid-lecture doesn't restart the
 clock, and video identity is the address's meaning rather than its letters —
 every shape of YouTube link collapses to its video id — so one lecture stays one
-entry with all its minutes on it. A video is named by the title that held the
-screen longest for it: window titles and browser URLs are read on different
-clocks, so the instant after you move to the next lecture the new name is briefly
-seen against the old address, and weighing titles by seconds keeps that instant
-from deciding what anything is called. Study-looking material auto-enrols in a **1/3/7/14/30-day revision
+entry with all its minutes on it. Fullscreen playback can leave an untitled
+window in focus while the window holding the page — and its title — is still open
+in the same app, so the title is read from what that app has in front right now.
+A video is then named by the title that held the screen longest for it: window
+titles and browser URLs are read on different clocks, so the instant after you
+move to the next lecture the new name is briefly seen against the old address,
+and weighing titles by seconds keeps that instant from deciding what anything is
+called. Study-looking material auto-enrols in a **1/3/7/14/30-day revision
 ladder**. Deadlines come from **NSDataDetector** anchored to the deadline phrase,
 never guessing a written year, flagging ambiguous `12/09/2026`-style dates as
 *check date*, and capped at one item per kind per due day per screen.

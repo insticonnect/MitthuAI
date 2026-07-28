@@ -43,17 +43,50 @@ enum AXReader {
         guard let front = NSWorkspace.shared.frontmostApplication else { return nil }
         let window = focusedWindow(pid: front.processIdentifier)
         var title = ""
-        if let w = window, let t = string(w, kAXTitleAttribute as String) {
-            title = t.trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        // A window with no title of its own but a document open is named by the
-        // document — a PDF in Preview, a file in QuickTime. This asks the
-        // focused window about itself; it never borrows a name from elsewhere,
-        // which is the only way a title can end up describing the wrong thing.
-        if title.isEmpty, let w = window, let doc = string(w, kAXDocumentAttribute as String), !doc.isEmpty {
-            title = URL(string: doc)?.lastPathComponent ?? doc
-        }
+        if let w = window { title = windowTitle(w) }
+        if title.isEmpty { title = frontWindowTitle(pid: front.processIdentifier) }
         return (front, window, title)
+    }
+
+    /// What a window calls itself: its title, or failing that the document it
+    /// has open — a PDF in Preview, a file in QuickTime.
+    private static func windowTitle(_ w: AXUIElement) -> String {
+        if let t = string(w, kAXTitleAttribute as String) {
+            let trimmed = t.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { return trimmed }
+        }
+        if let doc = string(w, kAXDocumentAttribute as String), !doc.isEmpty {
+            return URL(string: doc)?.lastPathComponent ?? doc
+        }
+        return ""
+    }
+
+    /// What macOS calls this app's front window **right now**.
+    ///
+    /// Playing a video fullscreen can leave an untitled container in focus while
+    /// the window holding the page — and its title — is still open in the same
+    /// app. The name is there to be read; it just isn't on the window that has
+    /// focus, so asking only that window threw it away.
+    ///
+    /// Every question here is about the present: the app's main window, then the
+    /// on-screen windows it still has. Nothing is remembered from a moment ago,
+    /// which is the distinction that matters — a remembered title outlives the
+    /// thing it described, and that is how one lecture's name ended up on
+    /// another's entry.
+    private static func frontWindowTitle(pid: pid_t) -> String {
+        let appRef = AXUIElementCreateApplication(pid)
+        if let main = attr(appRef, kAXMainWindowAttribute as String) {
+            let t = windowTitle(main as! AXUIElement)
+            if !t.isEmpty { return t }
+        }
+        guard let windows = attr(appRef, kAXWindowsAttribute as String) as? [AXUIElement] else { return "" }
+        for w in windows.prefix(8) {
+            // A minimized window's title describes nothing that is on screen.
+            if let minimized = attr(w, kAXMinimizedAttribute as String) as? Bool, minimized { continue }
+            let t = windowTitle(w)
+            if !t.isEmpty { return t }
+        }
+        return ""
     }
 
     /// Walk the AX tree of a window collecting user-visible text, plus — in the
