@@ -1,0 +1,94 @@
+name: Release
+
+# Cutting a release is one command:  git tag v1.2.0 && git push origin v1.2.0
+# It builds a universal app, packages the disk image, and publishes it to GitHub
+# Releases — which is what https://mitthuai.com/install.sh downloads from.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag to publish, e.g. v1.2.0'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: macos-14
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: v
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION="${GITHUB_REF_NAME}"
+          fi
+          case "$VERSION" in
+            v*) ;;
+            *) echo "version must start with 'v' (got '$VERSION')" >&2; exit 1 ;;
+          esac
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Releasing $VERSION"
+
+      - name: Install dmgbuild
+        run: |
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          pipx install dmgbuild || pip3 install --break-system-packages dmgbuild
+
+      - name: Build app + disk image
+        run: ./build.sh --universal --dmg --version "${{ steps.v.outputs.version }}"
+
+      - name: Verify bundle
+        run: ./Tools/verify-bundle.sh build/MitthuAI.app build/MitthuAI.dmg
+
+      - name: Checksums
+        working-directory: build
+        run: |
+          shasum -a 256 MitthuAI.dmg > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          cp install.sh build/install.sh
+          {
+            echo "## Install"
+            echo
+            echo '```bash'
+            echo 'curl -fsSL https://mitthuai.com/install.sh | bash'
+            echo '```'
+            echo
+            echo "Or download \`MitthuAI.dmg\` below and drag MitthuAI to Applications."
+            echo "Universal build (Apple Silicon + Intel), macOS 12 or newer."
+            echo
+            echo "After installing, grant **Accessibility** in System Settings →"
+            echo "Privacy & Security, then quit and relaunch MitthuAI."
+            echo
+            echo "Verify your download against \`SHA256SUMS.txt\`:"
+            echo '```'
+            cat build/SHA256SUMS.txt
+            echo '```'
+          } > build/NOTES.md
+
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            gh release upload "$VERSION" \
+              build/MitthuAI.dmg build/SHA256SUMS.txt build/install.sh --clobber
+            gh release edit "$VERSION" --notes-file build/NOTES.md --latest
+          else
+            gh release create "$VERSION" \
+              --title "MitthuAI ${VERSION}" \
+              --notes-file build/NOTES.md \
+              --target "$GITHUB_SHA" \
+              --latest \
+              build/MitthuAI.dmg build/SHA256SUMS.txt build/install.sh
+          fi
