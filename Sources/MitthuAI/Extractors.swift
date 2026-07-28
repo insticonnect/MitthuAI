@@ -412,6 +412,81 @@ enum Extractors {
         "/lesson", "/player", "/stream", ".m3u8", ".mp4"
     ]
 
+    /// Analytics and referral crumbs — they say where you came from, never what
+    /// you are looking at. Safe to drop on any host, because no site identifies
+    /// a page by them. Anything more aggressive is kept to hosts we know (see
+    /// `playerNoiseParams`): stripping a parameter that *does* identify a page
+    /// would merge two different lectures into one entry, which is worse than
+    /// the duplicate it was meant to prevent.
+    private static let noiseParams: Set<String> = [
+        "fbclid", "gclid", "igshid", "mc_cid", "mc_eid", "ref_src", "spm",
+        "si", "yclid", "msclkid"
+    ]
+
+    /// Player bookkeeping, dropped only on YouTube-shaped addresses: how far in
+    /// you were and which page embedded the player.
+    private static let playerNoiseParams: Set<String> = [
+        "t", "start", "time_continue", "themerefresh", "feature", "pp",
+        "ab_channel", "source_ve_path", "embeds_referring_euri",
+        "embeds_referring_origin", "embeds_euri", "embeds_origin",
+        "widget_referrer", "app", "rel", "autoplay", "iv_load_policy"
+    ]
+
+    /// The identity of a video address. The portal hands the player a link
+    /// carrying where it was embedded from and how far in you were —
+    /// `…&time_continue=0&embeds_referring_euri=…&themeRefresh=1` — so the same
+    /// lecture came back with a different URL each visit, and its watch time
+    /// was split across entries that each looked like a new video. A YouTube
+    /// address collapses to its video id; anything else keeps its path and
+    /// fragment (SPA portals route on `#/lesson/12`) and drops only the
+    /// parameters known to carry no meaning.
+    static func canonicalURL(_ raw: String?) -> String? {
+        guard let raw = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else { return nil }
+        guard var comps = URLComponents(string: raw) else { return raw }
+
+        let host = (comps.host ?? "").lowercased()
+        if let id = youtubeVideoId(host: host, path: comps.path, query: comps.queryItems) {
+            return "https://www.youtube.com/watch?v=" + id
+        }
+
+        let isPlayerHost = host.contains("youtube") || host.contains("youtu.be")
+        if let items = comps.queryItems {
+            let kept = items.filter { item -> Bool in
+                let n = item.name.lowercased()
+                if noiseParams.contains(n) || n.hasPrefix("utm_") { return false }
+                return !(isPlayerHost && playerNoiseParams.contains(n))
+            }.sorted { $0.name < $1.name }
+            if kept.isEmpty {
+                comps.queryItems = nil
+            } else {
+                comps.queryItems = kept
+            }
+        }
+        // "/lesson/12" and "/lesson/12/" are one page.
+        if comps.path.count > 1 && comps.path.hasSuffix("/") { comps.path = String(comps.path.dropLast()) }
+        return comps.string ?? raw
+    }
+
+    /// The video id inside any shape of YouTube link — watch, embed (what a
+    /// college portal puts in its iframe), youtu.be, shorts, live.
+    private static func youtubeVideoId(host: String, path: String, query: [URLQueryItem]?) -> String? {
+        var h = host.lowercased()
+        if h.hasPrefix("www.") { h = String(h.dropFirst(4)) }
+        if h == "youtu.be" {
+            let id = path.split(separator: "/").first.map { String($0) } ?? ""
+            return id.isEmpty ? nil : id
+        }
+        guard ["youtube.com", "m.youtube.com", "music.youtube.com", "youtube-nocookie.com"].contains(h) else {
+            return nil
+        }
+        for prefix in ["/embed/", "/shorts/", "/live/", "/v/"] where path.hasPrefix(prefix) {
+            let id = String(path.dropFirst(prefix.count)).split(separator: "/").first.map { String($0) } ?? ""
+            return id.isEmpty ? nil : id
+        }
+        if path == "/watch", let v = query?.first(where: { $0.name == "v" })?.value, !v.isEmpty { return v }
+        return nil
+    }
+
     /// Hosts that make something study material regardless of its title.
     private static let studyHosts = [
         ".edu", ".ac.in", ".ac.uk", ".edu.au", "moodle", "canvas", "blackboard",
@@ -510,7 +585,11 @@ enum Extractors {
     static func detectWatched(app: String, title: String, url: String?, ts: Double,
                               duration: Double, newSecs: Double, signals: PlayerSignals,
                               store: Store) -> Bool {
-        guard !title.isEmpty else { return false }
+        // A window playing video fullscreen reports no title at all, which used
+        // to end the story right here — the lecture you actually sat through was
+        // the one thing that never reached Brain. A URL names it just as well.
+        let canonical = canonicalURL(url)
+        guard !title.isEmpty || !(canonical ?? "").isEmpty else { return false }
         let haystack = (title + " " + app + " " + (url ?? "")).lowercased()
 
         // With both text and URL capture switched off there is no evidence to
@@ -518,15 +597,16 @@ enum Extractors {
         let blind = !Config.shared.captureText && !Config.shared.captureURLs
         let (score, direct, reasons) = videoScore(app: app, title: title, url: url, signals: signals)
         let why = reasons.joined(separator: ", ")
+        let label = title.isEmpty ? (canonical ?? "") : title
         guard blind ? knownVideoSource(haystack) : (score >= 3 && direct) else {
-            if score > 0 { logDecision("not a video (score \(score): \(why)) — \(title.prefix(60))") }
+            if score > 0 { logDecision("not a video (score \(score): \(why)) — \(label.prefix(60))") }
             return false
         }
 
         // Strong evidence is trusted sooner; a weak match still has to hold the
         // screen for the old five minutes before it counts as watched.
         guard duration >= (score >= 5 ? 60 : 300) else {
-            logDecision("video seen but only \(Int(duration))s (score \(score): \(why)) — \(title.prefix(60))")
+            logDecision("video seen but only \(Int(duration))s (score \(score): \(why)) — \(label.prefix(60))")
             return false
         }
 
@@ -534,10 +614,11 @@ enum Extractors {
             .replacingOccurrences(of: " - YouTube", with: "")
             .replacingOccurrences(of: " – YouTube", with: "")
             .prefix(140))
-        guard let (factId, isNew) = store.recordWatch(title: cleanTitle, url: url, source: app,
+        guard let (factId, isNew) = store.recordWatch(title: cleanTitle, url: canonical, source: app,
                                                       secs: newSecs, ts: ts) else { return false }
+        let logged = cleanTitle.isEmpty ? label : cleanTitle
         if isNew {
-            logDecision("watched (score \(score): \(why)) — \(cleanTitle.prefix(60))")
+            logDecision("watched (score \(score): \(why)) — \(logged.prefix(60))")
             // Study material auto-enrolls in the revision ladder (configurable).
             // Anything a user rule files under Study counts as well — that's
             // the escape hatch for a site none of the built-in lists know
@@ -549,7 +630,7 @@ enum Extractors {
                 store.addRevisionLadder(factId: factId, baseTs: ts)
             }
         } else if newSecs >= 30 {
-            logDecision("watch time +\(Int(newSecs / 60))m \(Int(newSecs) % 60)s — \(cleanTitle.prefix(60))")
+            logDecision("watch time +\(Int(newSecs / 60))m \(Int(newSecs) % 60)s — \(logged.prefix(60))")
         }
         return true
     }
