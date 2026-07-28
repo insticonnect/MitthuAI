@@ -107,12 +107,15 @@ collects — an on-screen player timecode, a native player app, play/pause and
 seek controls in the accessibility tree, audio playing, the display held awake,
 a video-shaped URL, a known or learning host. Three points (with at least one
 signal from the window itself) makes it a video, so an embedded lecture player
-counts and an idle YouTube homepage does not. Fullscreen playback counts too:
-that window reports no title, so the title falls back to what the app still has
-open and watch time is tallied per *video* rather than per window title. Video
-identity is the address's meaning, not its letters — every shape of YouTube link
-collapses to its video id — so one lecture stays one entry with all its minutes
-on it. Study-looking material auto-enrols in a **1/3/7/14/30-day revision
+counts and an idle YouTube homepage does not. Watch time is tallied per *video*
+rather than per window title, so going fullscreen mid-lecture doesn't restart the
+clock, and video identity is the address's meaning rather than its letters —
+every shape of YouTube link collapses to its video id — so one lecture stays one
+entry with all its minutes on it. A video is named by the title that held the
+screen longest for it: window titles and browser URLs are read on different
+clocks, so the instant after you move to the next lecture the new name is briefly
+seen against the old address, and weighing titles by seconds keeps that instant
+from deciding what anything is called. Study-looking material auto-enrols in a **1/3/7/14/30-day revision
 ladder**. Deadlines come from **NSDataDetector** anchored to the deadline phrase,
 never guessing a written year, flagging ambiguous `12/09/2026`-style dates as
 *check date*, and capped at one item per kind per due day per screen.

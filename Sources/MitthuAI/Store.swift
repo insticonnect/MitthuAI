@@ -683,9 +683,12 @@ final class Store {
         if let row = existing.first {
             let id = Int64(row.int("id"))
             db.run("UPDATE facts SET watch_secs = watch_secs + ? WHERE id = ?", [max(0, secs), id])
-            // The stretch that opened the entry may have had no title to give
-            // (fullscreen); once macOS names the video, the entry takes the name.
-            if row.str("title").isEmpty && !title.isEmpty { setFactTitle(id: id, title: title) }
+            // The entry opens as soon as a minute has been watched, when the
+            // title that held the screen longest may not have settled yet. A
+            // later, better answer for the same video replaces it — a watched
+            // title is read from the window, never typed, so there is nothing of
+            // the user's to lose here (their own words live in `note`).
+            if !title.isEmpty && row.str("title") != title { setFactTitle(id: id, title: title) }
             return (id, false)
         }
         let id = db.run("""

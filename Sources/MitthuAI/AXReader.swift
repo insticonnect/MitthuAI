@@ -46,31 +46,14 @@ enum AXReader {
         if let w = window, let t = string(w, kAXTitleAttribute as String) {
             title = t.trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        // A video playing fullscreen sits in a window that carries no title of
-        // its own — and a blank title costs that stretch its category and the
-        // video its watch time. Before settling for nothing, ask the app what
-        // it has open: the document, then any window still holding a name
-        // behind the fullscreen one.
+        // A window with no title of its own but a document open is named by the
+        // document — a PDF in Preview, a file in QuickTime. This asks the
+        // focused window about itself; it never borrows a name from elsewhere,
+        // which is the only way a title can end up describing the wrong thing.
         if title.isEmpty, let w = window, let doc = string(w, kAXDocumentAttribute as String), !doc.isEmpty {
             title = URL(string: doc)?.lastPathComponent ?? doc
         }
-        if title.isEmpty {
-            title = firstTitledWindow(pid: front.processIdentifier)
-        }
         return (front, window, title)
-    }
-
-    /// The first window of this app that still has a name — what the browser
-    /// goes on calling the page whose video went fullscreen.
-    private static func firstTitledWindow(pid: pid_t) -> String {
-        let appRef = AXUIElementCreateApplication(pid)
-        guard let windows = attr(appRef, kAXWindowsAttribute as String) as? [AXUIElement] else { return "" }
-        for w in windows.prefix(8) {
-            guard let t = string(w, kAXTitleAttribute as String) else { continue }
-            let trimmed = t.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty { return trimmed }
-        }
-        return ""
     }
 
     /// Walk the AX tree of a window collecting user-visible text, plus — in the
