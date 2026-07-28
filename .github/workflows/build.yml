@@ -1,0 +1,47 @@
+name: Build
+
+# Every push builds the real app on a macOS runner and keeps the disk image as
+# a downloadable artifact, so a broken build is caught before a release is cut.
+on:
+  push:
+    branches: ['**']
+    paths-ignore: ['**/*.md', 'relay/**']
+  pull_request:
+    paths-ignore: ['**/*.md', 'relay/**']
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    name: Universal build
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain versions
+        run: |
+          sw_vers
+          swiftc --version
+          xcrun --show-sdk-path
+
+      - name: Install dmgbuild
+        run: |
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          pipx install dmgbuild || pip3 install --break-system-packages dmgbuild
+
+      - name: Build app + disk image
+        run: ./build.sh --universal --dmg
+
+      - name: Verify bundle
+        run: ./Tools/verify-bundle.sh build/MitthuAI.app build/MitthuAI.dmg
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MitthuAI-dmg-${{ github.sha }}
+          path: build/MitthuAI.dmg
+          if-no-files-found: error
+          retention-days: 14
